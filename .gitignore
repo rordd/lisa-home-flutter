@@ -1,0 +1,37 @@
+# Environment & secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+package-lock.json
+
+# Flutter
+flutter_tv_a2ui/build/
+flutter_tv_a2ui/.dart_tool/
+flutter_tv_a2ui/.flutter-plugins
+flutter_tv_a2ui/.flutter-plugins-dependencies
+flutter_tv_a2ui/.packages
+flutter_tv_a2ui/.pub-cache/
+flutter_tv_a2ui/.pub/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# gstack
+.gstack/
+
+# Generated webapps
+webapps/*.html
+
+# GenUI samples (cloned separately)
+/genui-samples/

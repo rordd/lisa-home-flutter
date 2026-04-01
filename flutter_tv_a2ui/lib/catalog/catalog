@@ -1,0 +1,662 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+
+const FONT = "'Inter', -apple-system, sans-serif";
+const GLASS = {
+  background: "rgba(255,255,255,0.78)",
+  backdropFilter: "blur(40px) saturate(180%)",
+  WebkitBackdropFilter: "blur(40px) saturate(180%)",
+  borderRadius: 28,
+  border: "1px solid rgba(255,255,255,0.5)",
+  boxShadow: "0 2px 20px rgba(0,0,0,0.04)",
+};
+
+// ═══════════════════════════════════════
+// Focusable with press state + link
+// ═══════════════════════════════════════
+function Thumb({ children, href, style, id }) {
+  const ref = useRef(null);
+  const [state, setState] = useState("idle"); // idle | focused | pressed
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onFocus = () => setState("focused");
+    const onBlur = () => setState("idle");
+    el.addEventListener("focus", onFocus);
+    el.addEventListener("blur", onBlur);
+    return () => { el.removeEventListener("focus", onFocus); el.removeEventListener("blur", onBlur); };
+  }, []);
+
+  const handlePress = () => {
+    setState("pressed");
+    setTimeout(() => {
+      if (href) window.open(href, "_blank");
+      setState("focused");
+    }, 300);
+  };
+
+  const handleKey = (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handlePress(); }
+  };
+
+  const scale = state === "pressed" ? 0.96 : state === "focused" ? 1.04 : 1;
+  const glow = state === "focused"
+    ? "0 0 0 3px rgba(0,122,255,0.5), 0 8px 30px rgba(0,0,0,0.12)"
+    : state === "pressed"
+    ? "0 0 0 3px rgba(0,122,255,0.7), 0 2px 8px rgba(0,0,0,0.15)"
+    : "none";
+
+  return (
+    <div ref={ref} tabIndex={0} data-fid={id}
+      onClick={handlePress} onKeyDown={handleKey}
+      style={{
+        ...style, outline: "none", cursor: "pointer",
+        transform: `scale(${scale})`,
+        boxShadow: glow,
+        transition: "all 0.25s cubic-bezier(0.22,1,0.36,1)",
+        zIndex: state !== "idle" ? 10 : "auto",
+        position: "relative",
+      }}
+    >
+      {typeof children === "function" ? children(state) : children}
+    </div>
+  );
+}
+
+// Simple focusable (no link)
+function F({ children, onPress, style, autoFocus, id }) {
+  const ref = useRef(null);
+  const [f, setF] = useState(false);
+  useEffect(() => { if (autoFocus) setTimeout(() => ref.current?.focus(), 100); }, [autoFocus]);
+  return (
+    <div ref={ref} tabIndex={0} data-fid={id}
+      onFocus={() => setF(true)} onBlur={() => setF(false)}
+      onClick={onPress}
+      onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); onPress?.(); }}}
+      style={{
+        ...style, outline: "none",
+        transition: "all 0.25s cubic-bezier(0.22,1,0.36,1)",
+        transform: f ? "scale(1.03)" : "scale(1)",
+        boxShadow: f ? "0 0 0 3px rgba(0,122,255,0.5), 0 8px 24px rgba(0,0,0,0.1)" : style?.boxShadow || "none",
+        zIndex: f ? 10 : "auto",
+      }}
+    >{children}</div>
+  );
+}
+
+// ═══════════════════════════════════════
+// PLAY OVERLAY — appears on focus/press
+// ═══════════════════════════════════════
+function PlayOverlay({ state, label }) {
+  if (state === "idle") return null;
+  return (
+    <div style={{
+      position: "absolute", inset: 0, borderRadius: "inherit",
+      background: state === "pressed"
+        ? "rgba(0,0,0,0.5)"
+        : "rgba(0,0,0,0.3)",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      transition: "all 0.2s",
+      zIndex: 5,
+    }}>
+      <div style={{
+        width: state === "pressed" ? 48 : 52,
+        height: state === "pressed" ? 48 : 52,
+        borderRadius: "50%",
+        background: "rgba(255,255,255,0.95)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        transition: "all 0.2s",
+        boxShadow: "0 2px 12px rgba(0,0,0,0.2)",
+      }}>
+        {label === "play" ? (
+          <span style={{ fontSize: 18, marginLeft: 3, color: "#1d1d1f" }}>▶</span>
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#1d1d1f">
+            <path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+          </svg>
+        )}
+      </div>
+      <div style={{
+        marginTop: 10, fontSize: 13, fontWeight: 600, color: "#fff",
+        letterSpacing: 0.5, opacity: state === "pressed" ? 1 : 0.8,
+      }}>
+        {label === "play" ? "재생하기" : "바로가기"}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+// MediaRailCard — YouTube / Movie
+// ═══════════════════════════════════════
+function MediaRailCard({ variant }) {
+  const items = variant === "youtube" ? [
+    { title:"2026 여행지 TOP 10", sub:"여행의 기술 · 142만", dur:"18:24", hue:0, url:"https://youtube.com" },
+    { title:"초보 홈트 30분", sub:"핏라이프 · 89만", dur:"22:10", hue:150, url:"https://youtube.com" },
+    { title:"AI가 바꾸는 일상", sub:"테크인사이드 · 203만", dur:"15:33", hue:220, url:"https://youtube.com" },
+    { title:"봄 파스타 레시피", sub:"맛있는주방 · 67만", dur:"12:45", hue:30, url:"https://youtube.com" },
+    { title:"재즈 플레이리스트", sub:"뮤직라운지 · 315만", dur:"1:02:30", hue:280, url:"https://youtube.com" },
+  ] : [
+    { title:"듄: 메시아", sub:"SF · 2026", dur:"2:46", hue:35, url:"https://netflix.com" },
+    { title:"인사이드 아웃 3", sub:"애니 · 2026", dur:"1:42", hue:200, url:"https://netflix.com" },
+    { title:"미션 임파서블 9", sub:"액션 · 2026", dur:"2:18", hue:350, url:"https://netflix.com" },
+  ];
+  const isMovie = variant === "movie";
+
+  return (
+    <div style={{ ...GLASS, padding: 0, overflow: "hidden", color: "#1d1d1f" }}>
+      <div style={{ padding: "24px 36px 10px", display: "flex", alignItems: "center", gap: 10 }}>
+        {isMovie
+          ? <span style={{ fontSize: 20 }}>🎬</span>
+          : <span style={{ color: "#ff0000", fontSize: 20 }}>▶</span>
+        }
+        <span style={{ fontSize: 22, fontWeight: 600 }}>{isMovie ? "영화 추천" : "YouTube 추천"}</span>
+      </div>
+      <div style={{ display: "flex", gap: 16, padding: "10px 36px 32px", overflowX: "auto", scrollbarWidth: "none" }}>
+        {items.map((v, i) => (
+          <Thumb key={i} id={`m-${i}`} href={v.url}
+            style={{
+              minWidth: isMovie ? 160 : 240, flexShrink: 0,
+              borderRadius: 18, overflow: "hidden",
+            }}
+          >
+            {(state) => (<>
+              <div style={{
+                width: isMovie ? 160 : 240,
+                height: isMovie ? 230 : 135,
+                borderRadius: 18,
+                background: `linear-gradient(135deg, hsl(${v.hue},55%,62%), hsl(${v.hue+30},45%,52%))`,
+                position: "relative", overflow: "hidden",
+              }}>
+                {/* Default play icon — fades when overlay appears */}
+                <div style={{
+                  position: "absolute", inset: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  opacity: state === "idle" ? 0.4 : 0,
+                  transition: "opacity 0.2s",
+                }}>
+                  <div style={{
+                    width: 40, height: 40, borderRadius: "50%",
+                    background: "rgba(255,255,255,0.8)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <span style={{ fontSize: 14, marginLeft: 2, color: "#1d1d1f" }}>▶</span>
+                  </div>
+                </div>
+
+                {/* Duration badge */}
+                <div style={{
+                  position: "absolute", bottom: 8, right: 10,
+                  background: "rgba(0,0,0,0.65)", color: "#fff",
+                  padding: "2px 8px", borderRadius: 6, fontSize: 13,
+                  zIndex: 6,
+                }}>{v.dur}</div>
+
+                {/* Focus/press overlay */}
+                <PlayOverlay state={state} label="play" />
+              </div>
+              <div style={{ padding: "10px 4px" }}>
+                <div style={{ fontSize: 17, fontWeight: 600, lineHeight: 1.3 }}>{v.title}</div>
+                <div style={{ fontSize: 14, color: "#86868b", marginTop: 3 }}>{v.sub}</div>
+              </div>
+            </>)}
+          </Thumb>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+// PlaceRailCard — 맛집/카페
+// ═══════════════════════════════════════
+function PlaceRailCard() {
+  const places = [
+    { name:"을지로 골목식당", cat:"한식 · 을지로", rating:4.7, badge:"예약 가능", hue:25, url:"https://map.naver.com" },
+    { name:"스시 오마카세 린", cat:"일식 · 압구정", rating:4.9, badge:"인기", hue:200, url:"https://map.naver.com" },
+    { name:"트라토리아 봉골레", cat:"이탈리안 · 이태원", rating:4.5, badge:"", hue:10, url:"https://map.naver.com" },
+  ];
+  return (
+    <div style={{ ...GLASS, padding: 0, overflow: "hidden", color: "#1d1d1f" }}>
+      <div style={{ padding: "24px 36px 10px", fontSize: 22, fontWeight: 600 }}>📍 맛집 추천</div>
+      <div style={{ display: "flex", gap: 16, padding: "10px 36px 32px", overflowX: "auto", scrollbarWidth: "none" }}>
+        {places.map((p, i) => (
+          <Thumb key={i} id={`pl-${i}`} href={p.url}
+            style={{
+              minWidth: 240, borderRadius: 20, overflow: "hidden",
+              background: "rgba(0,0,0,0.015)", border: "1px solid rgba(0,0,0,0.05)",
+            }}
+          >
+            {(state) => (<>
+              <div style={{
+                height: 140,
+                background: `linear-gradient(135deg, hsl(${p.hue},40%,75%), hsl(${p.hue+20},35%,62%))`,
+                position: "relative", overflow: "hidden",
+              }}>
+                {p.badge && (
+                  <span style={{
+                    position: "absolute", top: 10, left: 12, fontSize: 12, fontWeight: 600,
+                    background: "rgba(255,255,255,0.92)", padding: "3px 10px", borderRadius: 10,
+                    color: "#1d1d1f", zIndex: 6,
+                  }}>{p.badge}</span>
+                )}
+                <div style={{
+                  position: "absolute", bottom: 10, left: 12,
+                  background: "rgba(255,255,255,0.92)", padding: "3px 10px", borderRadius: 10,
+                  fontSize: 14, fontWeight: 600, zIndex: 6,
+                }}>⭐ {p.rating}</div>
+
+                <PlayOverlay state={state} label="link" />
+              </div>
+              <div style={{ padding: "14px 18px" }}>
+                <div style={{ fontSize: 18, fontWeight: 600 }}>{p.name}</div>
+                <div style={{ fontSize: 14, color: "#86868b", marginTop: 3 }}>{p.cat}</div>
+              </div>
+            </>)}
+          </Thumb>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+// ArticleListCard — 기사 리스트 (row clickable)
+// ═══════════════════════════════════════
+function ArticleListCard() {
+  const items = [
+    { tag:"테크", title:"2026년 AI 트렌드 5가지", src:"테크 크런치", time:"3시간 전", url:"https://techcrunch.com" },
+    { tag:"라이프", title:"미니멀 라이프를 위한 정리법", src:"브런치", time:"5시간 전", url:"https://brunch.co.kr" },
+    { tag:"건강", title:"아침 루틴이 하루를 바꾸는 이유", src:"헬스조선", time:"어제", url:"https://health.chosun.com" },
+  ];
+  return (
+    <div style={{ ...GLASS, padding: 0, overflow: "hidden", color: "#1d1d1f" }}>
+      <div style={{ padding: "24px 36px 12px", fontSize: 22, fontWeight: 600 }}>📝 블로그 추천</div>
+      {items.map((item, i) => (
+        <Thumb key={i} id={`a-${i}`} href={item.url}
+          style={{
+            padding: "18px 36px", display: "flex", alignItems: "center", gap: 16,
+            borderTop: i > 0 ? "1px solid rgba(0,0,0,0.04)" : "none",
+            borderRadius: 0,
+          }}
+        >
+          {(state) => (<>
+            <span style={{
+              fontSize: 13, fontWeight: 600, padding: "4px 12px", borderRadius: 12,
+              background: state !== "idle" ? "rgba(0,122,255,0.12)" : i === 0 ? "rgba(0,122,255,0.08)" : "rgba(0,0,0,0.03)",
+              color: state !== "idle" ? "#007aff" : i === 0 ? "#007aff" : "#86868b",
+              flexShrink: 0, transition: "all 0.2s",
+            }}>{item.tag}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 18, fontWeight: 500 }}>{item.title}</div>
+              <div style={{ fontSize: 14, color: "#86868b", marginTop: 3 }}>{item.src} · {item.time}</div>
+            </div>
+            {/* Arrow that becomes active on focus */}
+            <span style={{
+              fontSize: 18, transition: "all 0.2s",
+              color: state !== "idle" ? "#007aff" : "#c7c7cc",
+              transform: state === "pressed" ? "translateX(4px)" : "none",
+            }}>›</span>
+          </>)}
+        </Thumb>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+// ReviewSummaryCard — AI 리뷰 요약
+// ═══════════════════════════════════════
+function ReviewSummaryCard() {
+  return (
+    <div style={{ ...GLASS, padding: "32px 36px", color: "#1d1d1f" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+        <span style={{ fontSize: 20 }}>🍝</span>
+        <span style={{ fontSize: 22, fontWeight: 700 }}>파스타고 마곡나루점 리뷰 요약</span>
+      </div>
+      <div style={{ fontSize: 15, color: "#86868b", marginBottom: 22 }}>
+        평점 <span style={{ color: "#f5a623", fontWeight: 600 }}>5.0</span> · 리뷰 123개 · AI 분석
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+        {[
+          { icon: "📍", title: "접근성", text: "마곡나루역, 서울식물원 근처라 들르기 편하다는 평이 많아." },
+          { icon: "✨", title: "매장 분위기", text: "매장이 깔끔하고 예뻐서 데이트나 가벼운 외식에 잘 맞는다는 반응." },
+          { icon: "💰", title: "가성비", text: "가격 부담이 크지 않은데 양과 퀄리티가 괜찮다는 후기가 자주 보여." },
+          { icon: "🍽", title: "맛 포인트", text: "소스가 진하고 면 식감이 괜찮아서 무난하게 만족도 높은 편이야." },
+        ].map((c, i) => (
+          <div key={i} style={{
+            padding: "20px 22px", borderRadius: 20,
+            background: "rgba(0,0,0,0.02)", border: "1px solid rgba(0,0,0,0.05)",
+          }}>
+            <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 10 }}>{c.icon} {c.title}</div>
+            <div style={{ fontSize: 15, color: "#555", lineHeight: 1.7 }}>{c.text}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 15, color: "#555", lineHeight: 1.8, marginBottom: 12 }}>
+        <span style={{ fontWeight: 600 }}>자주 언급된 메뉴:</span> 뇨끼 · 크림 파스타 · 로제 리조또 · 봉골레
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        {['"서울식물원 들렀다가 가기 좋다"', '"가격 대비 퀄리티 괜찮다"', '"매장 예뻐서 데이트하기 좋다"'].map((q, i) => (
+          <div key={i} style={{ fontSize: 15, color: "#86868b", lineHeight: 2 }}>{q}</div>
+        ))}
+      </div>
+      <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 20 }}>
+        한줄 요약: 마곡나루 근처에서 무난하게 성공 확률 높은 파스타집 느낌이야.
+      </div>
+
+      {/* Clickable — no separate button, the entire footer row is the link */}
+      <Thumb id="store-link" href="https://map.naver.com"
+        style={{
+          textAlign: "center", padding: "16px 0", borderRadius: 18,
+          border: "1px solid rgba(0,0,0,0.08)",
+        }}
+      >
+        {(state) => (
+          <span style={{
+            fontSize: 18, fontWeight: 500,
+            color: state !== "idle" ? "#005ec4" : "#007aff",
+            transition: "color 0.2s",
+          }}>
+            {state === "pressed" ? "이동 중..." : "가게 보기"}
+          </span>
+        )}
+      </Thumb>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+// ArticleSummaryCard
+// ═══════════════════════════════════════
+function ArticleSummaryCard() {
+  return (
+    <div style={{ ...GLASS, padding: "32px 36px", color: "#1d1d1f" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+        <span style={{ fontSize: 18 }}>📰</span>
+        <span style={{ fontSize: 20, fontWeight: 700 }}>한국은행 기준금리 동결 결정</span>
+      </div>
+      <div style={{ fontSize: 14, color: "#86868b", marginBottom: 20 }}>한국경제 · 2시간 전 · AI 요약</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+        {[
+          { icon: "📌", title: "핵심 결정", text: "기준금리 2.75%로 7회 연속 동결. 만장일치." },
+          { icon: "📊", title: "경제 전망", text: "올해 GDP 1.9% 전망. 소비 회복 둔화 우려." },
+          { icon: "💬", title: "총재 발언", text: "\"물가 안정에 시간 필요\" — 하반기 인하 시사." },
+          { icon: "🌍", title: "글로벌", text: "미국 Fed도 동결. 일본만 추가 인상 검토." },
+        ].map((c, i) => (
+          <div key={i} style={{
+            padding: "18px 20px", borderRadius: 18,
+            background: "rgba(0,0,0,0.025)", border: "1px solid rgba(0,0,0,0.04)",
+          }}>
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{c.icon} {c.title}</div>
+            <div style={{ fontSize: 14, color: "#555", lineHeight: 1.6 }}>{c.text}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 15, color: "#555", lineHeight: 1.8, marginBottom: 16 }}>
+        <span style={{ fontWeight: 600 }}>한줄 요약:</span> 경기 불확실성 속 금리 동결, 하반기 인하 가능성 열어둠.
+      </div>
+      <Thumb id="news-link" href="https://hankyung.com"
+        style={{ textAlign: "center", padding: "14px 0", borderRadius: 16, border: "1px solid rgba(0,0,0,0.08)" }}
+      >
+        {(state) => (
+          <span style={{ fontSize: 17, fontWeight: 500, color: state !== "idle" ? "#005ec4" : "#007aff", transition: "color 0.2s" }}>
+            {state === "pressed" ? "이동 중..." : "기사 원문 보기"}
+          </span>
+        )}
+      </Thumb>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+// Other cards (HeroData, Context, WebApp, Device)
+// ═══════════════════════════════════════
+function HeroDataCard() {
+  return (
+    <div style={{ ...GLASS, padding: "36px 40px", color: "#1d1d1f" }}>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontSize: 17, color: "#86868b", fontWeight: 500 }}>서울특별시</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 8 }}>
+            <span style={{ fontSize: 80 }}>☀️</span>
+            <div>
+              <div style={{ fontSize: 72, fontWeight: 200, letterSpacing: -3, lineHeight: 1 }}>22°</div>
+              <div style={{ fontSize: 20, color: "#86868b", marginTop: 4 }}>맑음</div>
+            </div>
+          </div>
+        </div>
+        <div style={{ textAlign: "right", fontSize: 18, color: "#86868b", lineHeight: 2.2 }}>
+          <div>최고 25° / 최저 14°</div>
+          <div>습도 45%</div>
+          <div>미세먼지 <span style={{ color: "#34c759", fontWeight: 600 }}>좋음</span></div>
+        </div>
+      </div>
+      <div style={{ display: "flex", marginTop: 28, paddingTop: 20, borderTop: "1px solid rgba(0,0,0,0.06)" }}>
+        {[{d:"화",i:"🌤",t:20},{d:"수",i:"☁️",t:18},{d:"목",i:"☀️",t:24},{d:"금",i:"☀️",t:26},{d:"토",i:"🌧",t:17}].map((f,i)=>(
+          <div key={i} style={{ flex:1, textAlign:"center" }}>
+            <div style={{ fontSize:16, color:"#86868b" }}>{f.d}</div>
+            <div style={{ fontSize:32, margin:"6px 0" }}>{f.i}</div>
+            <div style={{ fontSize:18, fontWeight:500 }}>{f.t}°</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ContextCard() {
+  return (
+    <div style={{ ...GLASS, padding: "36px 40px", color: "#1d1d1f" }}>
+      <div style={{ fontSize: 16, color: "#86868b", fontWeight: 500, marginBottom: 14 }}>오늘 뭐 입지?</div>
+      <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
+        <div style={{ fontSize: 56 }}>👔</div>
+        <div>
+          <div style={{ fontSize: 24, fontWeight: 600 }}>가벼운 긴팔 + 얇은 자켓</div>
+          <div style={{ fontSize: 17, color: "#86868b", marginTop: 6 }}>낮 22° / 아침저녁 14° · 일교차 큼</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+        {["☀️ 자외선 높음 → 모자","🌬 바람 약간 → 가벼운 겉옷"].map((t,i)=>(
+          <div key={i} style={{ flex:1, padding:"14px 18px", borderRadius:16, background:"rgba(0,0,0,0.03)", fontSize:15, color:"#555" }}>{t}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WebAppCard() {
+  return (
+    <div style={{
+      ...GLASS, background:"linear-gradient(135deg, rgba(232,243,255,0.8), rgba(240,232,255,0.7))",
+      border:"1px solid rgba(0,122,255,0.12)", padding:"44px 36px", textAlign:"center", color:"#1d1d1f",
+    }}>
+      <div style={{ fontSize:72 }}>🐍</div>
+      <div style={{ fontSize:28, fontWeight:700, marginTop:10 }}>스네이크 게임</div>
+      <div style={{ fontSize:17, color:"#86868b", marginTop:8 }}>AI가 생성한 웹 기반 게임</div>
+      <Thumb id="game-go" href="#game-snake"
+        style={{ display:"inline-block", marginTop:24, padding:"16px 48px", borderRadius:28, background:"#007aff", color:"#fff", fontSize:19, fontWeight:600 }}
+      >
+        {(state) => (
+          <span style={{ opacity: state === "pressed" ? 0.7 : 1 }}>
+            {state === "pressed" ? "로딩 중..." : "🎮 시작하기"}
+          </span>
+        )}
+      </Thumb>
+    </div>
+  );
+}
+
+function DeviceGridCard() {
+  const [devs, setDevs] = useState([
+    { id:1, icon:"💡", name:"거실 조명", val:"80%", on:true },
+    { id:2, icon:"❄️", name:"에어컨", val:"24°C", on:false },
+    { id:3, icon:"🌀", name:"공기청정기", val:"자동", on:true },
+    { id:4, icon:"🤖", name:"로봇청소기", val:"충전중", on:false },
+    { id:5, icon:"🔊", name:"스피커", val:"30%", on:true },
+    { id:6, icon:"🔒", name:"도어락", val:"잠김", on:true },
+  ]);
+  return (
+    <div style={{ ...GLASS, padding:0, overflow:"hidden", color:"#1d1d1f" }}>
+      <div style={{ padding:"24px 36px 12px", display:"flex", justifyContent:"space-between" }}>
+        <span style={{ fontSize:22, fontWeight:600 }}>🏠 홈 기기</span>
+        <span style={{ fontSize:15, color:"#86868b" }}>{devs.filter(d=>d.on).length}개 작동 중</span>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, padding:"6px 36px 28px" }}>
+        {devs.map(d => (
+          <F key={d.id} id={`dv-${d.id}`} onPress={()=>setDevs(p=>p.map(x=>x.id===d.id?{...x,on:!x.on}:x))}
+            style={{
+              padding:"20px 12px", borderRadius:18, textAlign:"center", cursor:"pointer",
+              background: d.on?"rgba(0,122,255,0.06)":"rgba(0,0,0,0.015)",
+              border: d.on?"1.5px solid rgba(0,122,255,0.15)":"1.5px solid rgba(0,0,0,0.04)",
+            }}>
+            <div style={{ fontSize:36 }}>{d.icon}</div>
+            <div style={{ fontSize:15, fontWeight:600, marginTop:8 }}>{d.name}</div>
+            <div style={{ fontSize:13, color:"#86868b", marginTop:3 }}>{d.val}</div>
+            <div style={{ fontSize:12, fontWeight:700, marginTop:8, color:d.on?"#007aff":"#c7c7cc" }}>
+              {d.on?"켜짐":"꺼짐"}
+            </div>
+          </F>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+// CATALOG + MAIN
+// ═══════════════════════════════════════
+const CATALOG = [
+  { id:"hero", name:"HeroDataCard", desc:"큰 숫자/아이콘 데이터", intents:["오늘 날씨","이번주 날씨","미세먼지"], color:"#007aff" },
+  { id:"context", name:"ContextCard", desc:"상황 기반 추천", intents:["오늘 뭐 입지","우산 가져갈까"], color:"#5856d6" },
+  { id:"media-yt", name:"MediaRailCard", desc:"썸네일 레일 (클릭→재생)", intents:["유튜브 추천","음악 추천"], color:"#ff3b30" },
+  { id:"media-mv", name:"MediaRailCard", desc:"포스터 레일 (클릭→상세)", intents:["영화 추천","넷플릭스 추천"], color:"#ff6482" },
+  { id:"article-list", name:"ArticleListCard", desc:"기사 리스트 (행 클릭→원문)", intents:["블로그 추천","뉴스 보여줘"], color:"#34c759" },
+  { id:"article-summary", name:"ArticleSummaryCard", desc:"기사 AI 요약 카드", intents:["기사 요약해줘","뉴스 핵심만"], color:"#30b0c7" },
+  { id:"review-summary", name:"ReviewSummaryCard", desc:"리뷰 AI 분석 요약", intents:["맛집 리뷰","이 가게 어때"], color:"#af52de" },
+  { id:"place", name:"PlaceRailCard", desc:"장소 카드 (클릭→지도)", intents:["맛집 추천","카페 추천"], color:"#ff2d55" },
+  { id:"webapp", name:"WebAppCard", desc:"AI 생성 웹앱", intents:["게임 만들어줘","퀴즈"], color:"#ff9500" },
+  { id:"device", name:"DeviceGridCard", desc:"IoT 기기 토글", intents:["집안 기기","조명 켜줘"], color:"#5ac8fa" },
+];
+
+export default function App() {
+  const [sel, setSel] = useState("media-yt");
+  const cur = CATALOG.find(c => c.id === sel);
+
+  const preview = () => {
+    switch(sel) {
+      case "hero": return <HeroDataCard />;
+      case "context": return <ContextCard />;
+      case "media-yt": return <MediaRailCard variant="youtube" />;
+      case "media-mv": return <MediaRailCard variant="movie" />;
+      case "article-list": return <ArticleListCard />;
+      case "article-summary": return <ArticleSummaryCard />;
+      case "review-summary": return <ReviewSummaryCard />;
+      case "place": return <PlaceRailCard />;
+      case "webapp": return <WebAppCard />;
+      case "device": return <DeviceGridCard />;
+      default: return null;
+    }
+  };
+
+  // spatial nav
+  useEffect(() => {
+    const h = e => {
+      const arrows = ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"];
+      if (!arrows.includes(e.key)) return;
+      const els = Array.from(document.querySelectorAll("[tabindex='0']")).filter(el => {
+        const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;
+      });
+      const cur = document.activeElement;
+      const idx = els.indexOf(cur);
+      if (idx === -1 && els.length) { els[0].focus(); return; }
+      const cr = cur.getBoundingClientRect();
+      const cx = cr.left + cr.width / 2, cy = cr.top + cr.height / 2;
+      let best = null, bestD = Infinity;
+      els.forEach((el, i) => {
+        if (i === idx) return;
+        const r = el.getBoundingClientRect();
+        const ex = r.left + r.width / 2, ey = r.top + r.height / 2;
+        const dx = ex - cx, dy = ey - cy;
+        let ok = false;
+        if (e.key === "ArrowRight" && dx > 12) ok = true;
+        if (e.key === "ArrowLeft" && dx < -12) ok = true;
+        if (e.key === "ArrowDown" && dy > 12) ok = true;
+        if (e.key === "ArrowUp" && dy < -12) ok = true;
+        if (ok) {
+          const p = (e.key === "ArrowRight" || e.key === "ArrowLeft") ? Math.abs(dx) : Math.abs(dy);
+          const s = (e.key === "ArrowRight" || e.key === "ArrowLeft") ? Math.abs(dy) : Math.abs(dx);
+          if (p + s * 3 < bestD) { bestD = p + s * 3; best = el; }
+        }
+      });
+      if (best) { e.preventDefault(); best.focus(); best.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" }); }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+
+  return (
+    <div style={{ fontFamily: FONT, background: "#f5f5f7", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700;800&display=swap');
+        * { box-sizing:border-box; margin:0; padding:0; }
+        ::-webkit-scrollbar { display:none; }
+        body { background:#f5f5f7; }
+      `}</style>
+
+      <div style={{ padding:"14px 24px", background:"rgba(245,245,247,0.85)", backdropFilter:"blur(20px)", borderBottom:"1px solid rgba(0,0,0,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:30, height:30, borderRadius:9, background:"linear-gradient(135deg,#667eea,#a855f7)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, color:"#fff" }}>T</div>
+          <span style={{ fontSize:16, fontWeight:700, color:"#1d1d1f" }}>TiVian catalog</span>
+          <span style={{ fontSize:12, color:"#86868b" }}>v3 · clickable thumbnails</span>
+        </div>
+      </div>
+
+      <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
+        <div style={{ width:260, borderRight:"1px solid rgba(0,0,0,0.06)", overflowY:"auto", padding:"8px 0", flexShrink:0, background:"rgba(255,255,255,0.5)" }}>
+          {CATALOG.map(c => (
+            <div key={c.id} onClick={() => setSel(c.id)} style={{
+              padding:"12px 16px", cursor:"pointer",
+              background: sel === c.id ? "rgba(0,122,255,0.05)" : "transparent",
+              borderLeft: sel === c.id ? `3px solid ${c.color}` : "3px solid transparent",
+            }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <div style={{ width:8, height:8, borderRadius:3, background:c.color, flexShrink:0 }} />
+                <span style={{ fontSize:13, fontWeight:600, color:"#1d1d1f" }}>{c.name}</span>
+              </div>
+              <div style={{ fontSize:11, color:"#86868b", marginTop:2, marginLeft:16 }}>{c.desc}</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:3, marginTop:5, marginLeft:16 }}>
+                {c.intents.map((t,i) => (
+                  <span key={i} style={{ fontSize:10, padding:"1px 6px", borderRadius:6, background:"rgba(0,0,0,0.04)", color:"#86868b" }}>{t}</span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ flex:1, overflowY:"auto", padding:20 }}>
+          <div style={{ marginBottom:16 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+              <div style={{ width:10, height:10, borderRadius:4, background:cur.color }} />
+              <span style={{ fontSize:20, fontWeight:700, color:"#1d1d1f" }}>{cur.name}</span>
+            </div>
+            <div style={{ fontSize:13, color:"#86868b" }}>{cur.desc}</div>
+            <div style={{ display:"flex", gap:6, marginTop:8, flexWrap:"wrap" }}>
+              {cur.intents.map((t,i) => (
+                <span key={i} style={{ fontSize:12, padding:"3px 10px", borderRadius:10, background:"rgba(0,122,255,0.06)", color:"#007aff", fontWeight:500 }}>"{t}"</span>
+              ))}
+            </div>
+          </div>
+          <div style={{ background:"rgba(0,0,0,0.015)", borderRadius:24, padding:20, border:"1px dashed rgba(0,0,0,0.06)" }}>
+            <div style={{ fontSize:11, color:"#c7c7cc", fontWeight:600, marginBottom:12, letterSpacing:1 }}>
+              TV PREVIEW — 썸네일에 포커스(Tab/방향키)해 보세요
+            </div>
+            {preview()}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
