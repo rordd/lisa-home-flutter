@@ -44,7 +44,7 @@ AZURE_API_VERSION = ENV.get("AZURE_API_VERSION", "2025-04-01-preview")
 AZURE_URL = f"https://{AZURE_IP}/openai/responses?api-version={AZURE_API_VERSION}"
 
 WEBAPPS_DIR = str(BASE_DIR / "webapps")
-STATIC_DIR = str(BASE_DIR / "flutter_tv_a2ui" / "build" / "web")
+STATIC_DIR = str(BASE_DIR / "build" / "web")
 os.makedirs(WEBAPPS_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 

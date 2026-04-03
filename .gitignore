@@ -10,13 +10,14 @@ node_modules/
 package-lock.json
 
 # Flutter
-flutter_tv_a2ui/build/
-flutter_tv_a2ui/.dart_tool/
-flutter_tv_a2ui/.flutter-plugins
-flutter_tv_a2ui/.flutter-plugins-dependencies
-flutter_tv_a2ui/.packages
-flutter_tv_a2ui/.pub-cache/
-flutter_tv_a2ui/.pub/
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+flutter_tv_a2ui/
 
 # IDE
 .idea/
