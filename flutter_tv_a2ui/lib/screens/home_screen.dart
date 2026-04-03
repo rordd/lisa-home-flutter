@@ -10,6 +10,11 @@ import '../catalog/tv_catalog.dart';
 import '../services/lisa_ws_content_generator.dart';
 import '../theme/tv_theme.dart';
 
+/// LLM 텍스트에서 HTML 태그를 제거하는 헬퍼
+String _stripHtmlTags(String text) {
+  return text.replaceAll(RegExp(r'<[^>]*>'), '').trim();
+}
+
 /// a2ui v0.9 — 하이브리드 UI
 /// 평소: 하단 토스트 바 (음성/텍스트 입력 + 1줄 응답)
 /// 대화: 오버레이 팝업 (show_chat=true)
@@ -108,18 +113,33 @@ class _HomeScreenState extends State<HomeScreen> {
       onTextResponse: (text) {
         Future.delayed(const Duration(milliseconds: 300), () {
           if (!mounted) return;
-          _cardUpdatedRecently = false;
           if (text.trim().isNotEmpty) {
-            _spotlightText = text;
-            // 카드 없이 텍스트만 온 경우 AI 코멘트를 단독 spotlight으로 표시
+            // 카드가 방금 업데이트됐으면 텍스트로 spotlight을 덮지 않음
+            if (_cardUpdatedRecently) {
+              _cardUpdatedRecently = false;
+              if (text.length >= 50) {
+                _spotlightText = text;
+                setState(() {});
+              }
+              return;
+            }
+            _cardUpdatedRecently = false;
+            // 50자 미만은 TTS로만 읽고 카드 표시 안 함
+            if (text.length < 50) return;
+            // 카드 없이 텍스트만 온 경우 LISA 코멘트를 단독 spotlight으로 표시
             _renderedCards.removeWhere((c) => c.typeName == '_AiCommentCard');
             if (_spotlightCard == null || _spotlightSurfaceId == _ghostSurfaceId) {
               _spotlightCard = _AiCommentCard(text: text);
               _spotlightSurfaceId = '__text__';
               _spotlightSpan = _GridSpan.m;
               _spotlightTypeName = '_AiCommentCard';
+            } else {
+              // 실제 카드가 spotlight에 있으면 옆에 코멘트 표시
+              _spotlightText = text;
             }
             setState(() {});
+          } else {
+            _cardUpdatedRecently = false;
           }
         });
       },
@@ -237,12 +257,26 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // ── 카드 이벤트 처리 (퀴즈 답변 등) ─────────
+  // ── 카드 이벤트 처리 (퀴즈 답변, URL 열기, 앱 런칭 등) ─────────
   void _handleCardEvent(UiEvent event, String typeName) {
-    if (event is UserActionEvent && event.name == 'answer') {
-      final choice = event.context['choice'] as String? ?? '';
-      print('[EVENT] $typeName answer: $choice');
-      _conversation.sendRequest(UserMessage.text(choice));
+    if (event is! UserActionEvent) return;
+    switch (event.name) {
+      case 'answer':
+        final choice = event.context['choice'] as String? ?? '';
+        print('[ACTION] $typeName answer: $choice');
+        _conversation.sendRequest(UserMessage.text(choice));
+      case 'openUrl':
+        final url = event.context['url'] as String?;
+        print('[ACTION] $typeName openUrl: $url');
+        if (url != null) openUrl(url);
+      case 'launchApp':
+        final appId = event.context['appId'] as String?;
+        print('[ACTION] $typeName launchApp: $appId');
+        // TV 앱 런칭 (향후 luna-send 등으로 확장 가능)
+        // fallback: URL이면 openUrl
+        if (appId != null && appId.startsWith('http')) openUrl(appId);
+      default:
+        print('[ACTION] $typeName unknown: ${event.name} ${event.context}');
     }
   }
 
@@ -826,16 +860,16 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: TV.accent.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: const Icon(Icons.auto_awesome_rounded, size: 16, color: TV.accent),
+                        child: const Icon(Icons.smart_toy_rounded, size: 16, color: TV.accent),
                       ),
                       const SizedBox(width: 10),
-                      const Text('AI', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: TV.accent)),
+                      const Text('LISA', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: TV.accent)),
                     ]),
                     const SizedBox(height: 16),
                     Expanded(
                       child: SingleChildScrollView(
                         child: Text(
-                          _spotlightText,
+                          _stripHtmlTags(_spotlightText),
                           style: const TextStyle(fontSize: 24, color: Colors.white, height: 1.6),
                         ),
                       ),
@@ -884,10 +918,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   color: TV.accent.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.auto_awesome_rounded, size: 16, color: TV.accent),
+                child: const Icon(Icons.smart_toy_rounded, size: 16, color: TV.accent),
               ),
               const SizedBox(width: 10),
-              const Text('AI', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: TV.accent)),
+              const Text('LISA', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: TV.accent)),
             ]),
             const SizedBox(height: 14),
             Text(
@@ -926,7 +960,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildToastRow() {
     return Row(children: [
-      Icon(Icons.auto_awesome_rounded, size: 20, color: TV.accent.withOpacity(0.8)),
+      Icon(Icons.smart_toy_rounded, size: 20, color: TV.accent.withOpacity(0.8)),
       const SizedBox(width: 12),
       Expanded(
         child: Text(_toastText, style: const TextStyle(fontSize: 22, color: Colors.white, height: 1.4),
@@ -1015,9 +1049,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 20, 12, 12),
                     child: Row(children: [
-                      const Icon(Icons.auto_awesome_rounded, size: 20, color: TV.accent),
+                      const Icon(Icons.smart_toy_rounded, size: 20, color: TV.accent),
                       const SizedBox(width: 10),
-                      const Text('AI 대화', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
+                      const Text('LISA', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
                       const Spacer(),
                       GestureDetector(
                         onTap: () => setState(() => _popupVisible = false),
@@ -1198,33 +1232,31 @@ class _AiCommentCard extends StatelessWidget {
         border: Border.all(color: Colors.white.withOpacity(0.1)),
       ),
       padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // AI 헤더
-          Row(children: [
-            Container(
-              width: 28, height: 28,
-              decoration: BoxDecoration(
-                color: TV.accent.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(8),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // AI 헤더
+            Row(children: [
+              Container(
+                width: 28, height: 28,
+                decoration: BoxDecoration(
+                  color: TV.accent.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.smart_toy_rounded, size: 16, color: TV.accent),
               ),
-              child: const Icon(Icons.auto_awesome_rounded, size: 16, color: TV.accent),
+              const SizedBox(width: 10),
+              const Text('LISA', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: TV.accent)),
+            ]),
+            const SizedBox(height: 12),
+            // 텍스트 (HTML 태그 strip)
+            Text(
+              _stripHtmlTags(text),
+              style: const TextStyle(fontSize: 22, color: Colors.white, height: 1.5),
             ),
-            const SizedBox(width: 10),
-            const Text('AI', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: TV.accent)),
-          ]),
-          const SizedBox(height: 12),
-          // 텍스트 (길면 스크롤)
-          Expanded(
-            child: SingleChildScrollView(
-              child: Text(
-                text,
-                style: const TextStyle(fontSize: 22, color: Colors.white, height: 1.5),
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     )
         .animate()
@@ -1284,7 +1316,7 @@ class _GhostCardState extends State<_GhostCard> {
                 color: TV.accent.withOpacity(0.15),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.auto_awesome_rounded, size: 14, color: TV.accent),
+              child: const Icon(Icons.smart_toy_rounded, size: 14, color: TV.accent),
             ),
           ]),
           const SizedBox(height: 24),

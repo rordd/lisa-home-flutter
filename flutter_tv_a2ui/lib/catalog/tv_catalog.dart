@@ -80,7 +80,8 @@ String? _extractYoutubeId(String url) {
   return null;
 }
 
-void _openUrl(String url) {
+void openUrl(String url) {
+  // Public: used by home_screen.dart for action dispatch handling
   print('[CATALOG] Opening URL: $url');
   // Flutter 웹에서는 url_launcher 대신 JS interop으로 직접 열기
   if (kIsWeb) {
@@ -98,6 +99,35 @@ void _openUrlWeb(String url) {
   } catch (e) {
     print('[CATALOG] JS open error: $e');
     launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+}
+
+/// action 모델 기반 이벤트 디스패치 (openUrl, launchApp 등)
+/// action이 없으면 fallbackUrl로 openUrl fallback (하위호환)
+void _dispatchAction(dynamic action, String? fallbackUrl,
+    void Function(UiEvent) dispatchEvent, String sourceId) {
+  if (action is Map<String, dynamic>) {
+    final fc = action['functionCall'] as Map?;
+    final ev = action['event'] as Map?;
+    if (fc != null) {
+      dispatchEvent(UserActionEvent(
+        name: fc['call'] as String? ?? 'unknown',
+        sourceComponentId: sourceId,
+        context: Map<String, dynamic>.from(fc['args'] as Map? ?? {}),
+      ));
+    } else if (ev != null) {
+      dispatchEvent(UserActionEvent(
+        name: ev['name'] as String? ?? 'event',
+        sourceComponentId: sourceId,
+        context: Map<String, dynamic>.from(ev['context'] as Map? ?? {}),
+      ));
+    }
+  } else if (fallbackUrl != null) {
+    dispatchEvent(UserActionEvent(
+      name: 'openUrl',
+      sourceComponentId: sourceId,
+      context: {'url': fallbackUrl},
+    ));
   }
 }
 
@@ -846,7 +876,7 @@ CatalogItem _mediaRailCard() => CatalogItem(
     print('[MediaRailCard] title=$title, variant=$variant, items.length=${items.length}, isMovie=$isMovie');
 
     // Movie → 2×2 포스터 그리드
-    if (isMovie) return _MoviePosterGrid(title: title, items: items);
+    if (isMovie) return _MoviePosterGrid(title: title, items: items, dispatchEvent: ctx.dispatchEvent);
 
     // YouTube → 4×1 가로 레일
     return LayoutBuilder(builder: (context, constraints) {
@@ -881,8 +911,7 @@ CatalogItem _mediaRailCard() => CatalogItem(
               child: Listener(
                 behavior: HitTestBehavior.opaque,
                 onPointerUp: (_) {
-                  final url = v['url'] as String?;
-                  if (url != null) _openUrl(url);
+                  _dispatchAction(v['action'], v['url'] as String?, ctx.dispatchEvent, 'media_$i');
                 },
                 child: SizedBox(width: thumbW, height: railH, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   // 썸네일 (Expanded로 남은 공간 꽉 채움)
@@ -932,7 +961,8 @@ CatalogItem _mediaRailCard() => CatalogItem(
 class _MoviePosterGrid extends StatelessWidget {
   final String title;
   final List<Map<String, dynamic>> items;
-  const _MoviePosterGrid({required this.title, required this.items});
+  final void Function(UiEvent) dispatchEvent;
+  const _MoviePosterGrid({required this.title, required this.items, required this.dispatchEvent});
 
   @override
   Widget build(BuildContext context) {
@@ -967,8 +997,7 @@ class _MoviePosterGrid extends StatelessWidget {
                 child: Listener(
                   behavior: HitTestBehavior.opaque,
                   onPointerUp: (_) {
-                    final url = v['url'] as String?;
-                    if (url != null && url.isNotEmpty) _openUrl(url);
+                    _dispatchAction(v['action'], v['url'] as String?, dispatchEvent, 'movie_$i');
                   },
                   child: SizedBox(width: posterW, height: railH, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     // 세로 포스터 (2:3)
@@ -1092,7 +1121,7 @@ CatalogItem _placeRailCard() => CatalogItem(
               cursor: SystemMouseCursors.click,
               child: Listener(
                 behavior: HitTestBehavior.opaque,
-                onPointerUp: (_) { final url = p['url'] as String?; if (url != null) _openUrl(url); },
+                onPointerUp: (_) { _dispatchAction(p['action'], p['url'] as String?, ctx.dispatchEvent, 'place_$i'); },
                 child: Container(width: 280,
                   decoration: BoxDecoration(borderRadius: BorderRadius.circular(TV.radiusMd), color: Colors.white.withOpacity(TV.overlayLight), border: Border.all(color: Colors.white.withOpacity(TV.overlayMedium))),
                   clipBehavior: Clip.antiAlias,
@@ -1181,7 +1210,7 @@ CatalogItem _articleListCard() => CatalogItem(
           final i = e.key; final a = e.value;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () { final url = a['url'] as String?; if (url != null) _openUrl(url); },
+            onTap: () { _dispatchAction(a['action'], a['url'] as String?, ctx.dispatchEvent, 'article_$i'); },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: TV.padding, vertical: 18),
               decoration: BoxDecoration(border: i > 0 ? Border(top: BorderSide(color: Colors.white.withOpacity(TV.borderLight))) : null),
@@ -1224,7 +1253,7 @@ CatalogItem _articleSummaryCard() => CatalogItem(
           Expanded(child: Text(d['title'] as String? ?? '', style: TV.body.copyWith(fontWeight: FontWeight.w700))),
         ]),
         Padding(padding: const EdgeInsets.only(top: 4, bottom: 20),
-            child: Text('${d['source'] ?? ''} · ${d['time'] ?? ''} · AI 요약', style: TV.sub)),
+            child: Text('${d['source'] ?? ''} · ${d['time'] ?? ''} · LISA 요약', style: TV.sub)),
         if (sections.isNotEmpty)
           Wrap(spacing: 12, runSpacing: 12, children: sections.map((s) => Container(
             width: (MediaQuery.of(ctx.buildContext).size.width * 0.2).clamp(200.0, 320.0),
@@ -1238,10 +1267,10 @@ CatalogItem _articleSummaryCard() => CatalogItem(
           )).toList()),
         if (d['summary'] != null) Padding(padding: const EdgeInsets.only(top: 16),
             child: Text(d['summary'], style: TV.sub.copyWith(fontWeight: FontWeight.w500, color: TV.text))),
-        if (d['url'] != null) Padding(padding: const EdgeInsets.only(top: 16),
+        if (d['url'] != null || d['action'] != null) Padding(padding: const EdgeInsets.only(top: 16),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => _openUrl(d['url'] as String),
+            onTap: () => _dispatchAction(d['action'], d['url'] as String?, ctx.dispatchEvent, ctx.id),
             child: Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 14),
                 decoration: BoxDecoration(borderRadius: BorderRadius.circular(TV.radiusSm), border: Border.all(color: const Color(0x14000000))),
                 child: Center(child: Text('기사 원문 보기', style: TV.sub.copyWith(fontWeight: FontWeight.w500, color: TV.accent)))),
@@ -1313,10 +1342,10 @@ CatalogItem _reviewSummaryCard() => CatalogItem(
           Text(d['summary'], style: TV.sub.copyWith(color: TV.text)),
         ],
         // 가게 보기 버튼
-        if (d['url'] != null) Padding(padding: const EdgeInsets.only(top: 16),
+        if (d['url'] != null || d['action'] != null) Padding(padding: const EdgeInsets.only(top: 16),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => _openUrl(d['url'] as String),
+            onTap: () => _dispatchAction(d['action'], d['url'] as String?, ctx.dispatchEvent, ctx.id),
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 24),
               decoration: BoxDecoration(borderRadius: BorderRadius.circular(TV.radiusSm), border: Border.all(color: TV.accent.withOpacity(0.3))),
@@ -1670,12 +1699,7 @@ CatalogItem _webappCard() => CatalogItem(
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () {
-              if (url != null) {
-                print('[CATALOG] Opening webapp: $url');
-                _openUrl(url);
-              } else {
-                print('[CATALOG] No webapp_url');
-              }
+              _dispatchAction(d['action'], url, ctx.dispatchEvent, ctx.id);
             },
             child: Container(padding: const EdgeInsets.symmetric(horizontal: 56, vertical: 18),
                 decoration: BoxDecoration(color: TV.accent, borderRadius: BorderRadius.circular(TV.radiusLg)),
@@ -2001,7 +2025,7 @@ class _DocumentCardWidget extends StatelessWidget {
                       border: Border.all(color: TV.accent.withOpacity(TV.overlayStrong)),
                     ),
                     child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Icon(Icons.auto_awesome_rounded, size: 20, color: TV.accent),
+                      const Icon(Icons.smart_toy_rounded, size: 20, color: TV.accent),
                       const SizedBox(width: 12),
                       Expanded(child: Text(message, style: TV.sub.copyWith(color: TV.text, height: 1.7))),
                     ]),
@@ -2064,7 +2088,11 @@ class _ComparisonCardWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = data['title'] as String? ?? '비교';
-    final columns = (data['columns'] as List<dynamic>?)?.cast<String>() ?? [];
+    // LISA가 첫 번째 column으로 "항목"/"구분" 등 label 헤더를 보내는 경우 제거
+    final rawColumns = (data['columns'] as List<dynamic>?)?.cast<String>() ?? [];
+    final columns = rawColumns.isNotEmpty && (rawColumns.first == '항목' || rawColumns.first == '구분')
+        ? rawColumns.sublist(1)
+        : rawColumns;
     final rows = (data['rows'] as List<dynamic>?)
         ?.map((r) => Map<String, dynamic>.from(r as Map)).toList() ?? [];
 

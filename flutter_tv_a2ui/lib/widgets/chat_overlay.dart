@@ -8,6 +8,8 @@ import '../models/models.dart';
 import '../services/app_provider.dart';
 import '../theme/tv_theme.dart';
 
+String _stripHtml(String s) => s.replaceAll(RegExp(r'<[^>]*>'), '').trim();
+
 /// ─────────────────────────────────────────────
 /// 채팅 오버레이 — Glass panel, typography-led
 /// ─────────────────────────────────────────────
@@ -104,7 +106,7 @@ class _ChatOverlayState extends State<ChatOverlay> {
       padding: const EdgeInsets.fromLTRB(24, 20, 12, 12),
       child: Row(
         children: [
-          Text('AI', style: TVTheme.titleLarge.copyWith(
+          Text('LISA', style: TVTheme.titleLarge.copyWith(
               color: TVTheme.accent, fontWeight: FontWeight.w700)),
           const SizedBox(width: 8),
           Container(width: 6, height: 6,
@@ -160,7 +162,7 @@ class _ChatOverlayState extends State<ChatOverlay> {
                 color: TVTheme.accent.withOpacity(0.15),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.auto_awesome_rounded,
+              child: const Icon(Icons.smart_toy_rounded,
                   size: 16, color: TVTheme.accent),
             ),
             const SizedBox(width: 10),
@@ -181,7 +183,7 @@ class _ChatOverlayState extends State<ChatOverlay> {
               ),
               child: message.isLoading
                   ? _buildLoadingIndicator()
-                  : Text(message.content,
+                  : Text(_stripHtml(message.content),
                       style: TVTheme.bodyLarge.copyWith(
                         color: isUser ? Colors.white : TVTheme.textPrimary,
                         fontSize: 22,

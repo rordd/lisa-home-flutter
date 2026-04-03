@@ -328,7 +328,7 @@ class LisaWsContentGenerator implements ContentGenerator {
     if (msg.containsKey('updateComponents')) {
       final uc = Map<String, dynamic>.from(msg['updateComponents'] as Map);
       final components = (uc['components'] as List<dynamic>? ?? [])
-          .map((c) => _convertComponentToSdk(Map<String, dynamic>.from(c as Map)))
+          .expand((c) => _convertComponentToSdk(Map<String, dynamic>.from(c as Map)))
           .toList();
       return {
         'surfaceUpdate': {
@@ -365,7 +365,7 @@ class LisaWsContentGenerator implements ContentGenerator {
     return null;
   }
 
-  static Map<String, dynamic> _convertComponentToSdk(Map<String, dynamic> comp) {
+  static List<Map<String, dynamic>> _convertComponentToSdk(Map<String, dynamic> comp) {
     final id = comp['id'] as String;
     final component = comp['component'];
     final weight = comp['weight'] as int?;
@@ -382,11 +382,11 @@ class LisaWsContentGenerator implements ContentGenerator {
           }
         }
       }
-      return {
+      return [{
         'id': id,
         'component': converted,
         if (weight != null) 'weight': weight,
-      };
+      }];
     }
 
     // v0.9 형식 (component가 String)
@@ -426,6 +426,23 @@ class LisaWsContentGenerator implements ContentGenerator {
         }
       }
 
+      // Button: text → child Text 컴포넌트 자동 생성
+      // genui Button은 child(컴포넌트 참조)가 필수. text 직접 지정 불가.
+      final extraComponents = <Map<String, dynamic>>[];
+      if (component == 'Button' && props.containsKey('text') && !props.containsKey('child')) {
+        final labelId = '${id}_label';
+        final labelText = props.remove('text');
+        props['child'] = labelId;
+        extraComponents.add({
+          'id': labelId,
+          'component': {
+            'Text': {
+              'text': labelText is String ? {'literalString': labelText} : labelText,
+            },
+          },
+        });
+      }
+
       // Button action 변환: v0.9 functionCall → GenUI {name, context}
       if (props.containsKey('action') && props['action'] is Map) {
         final action = Map<String, dynamic>.from(props['action'] as Map);
@@ -437,20 +454,30 @@ class LisaWsContentGenerator implements ContentGenerator {
               'context': (fc['args'] as Map).entries.map((e) =>
                   {'key': e.key, 'value': e.value}).toList(),
           };
+        } else if (action.containsKey('event') && action['event'] is Map) {
+          final ev = Map<String, dynamic>.from(action['event'] as Map);
+          props['action'] = {
+            'name': ev['name'] as String? ?? 'event',
+            if (ev['context'] is Map)
+              'context': (ev['context'] as Map).entries.map((e) =>
+                  {'key': e.key, 'value': e.value}).toList(),
+          };
         } else if (!action.containsKey('name')) {
-          // action에 name이 없으면 기본값
           props['action'] = {'name': 'action'};
         }
       }
 
-      return {
-        'id': id,
-        'component': {component: props},
-        if (weight != null) 'weight': weight,
-      };
+      return [
+        {
+          'id': id,
+          'component': {component: props},
+          if (weight != null) 'weight': weight,
+        },
+        ...extraComponents,
+      ];
     }
 
-    return comp;
+    return [comp];
   }
 
   @override
