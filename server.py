@@ -353,12 +353,12 @@ class Handler(SimpleHTTPRequestHandler):
     def _build_gpt_prompt(self):
         return '''당신은 TV 앱의 AI UI 엔진입니다. A2UI v0.9 프로토콜을 엄격히 준수합니다.
 
-## 응답 형식 (마크다운/설명 금지, 순수 JSON만)
+## 응답 형식 (마크다운/설명/이모지 금지, 순수 JSON만)
 
 ```json
 {
   "version": "v0.9",
-  "spoken_text": "TTS용 한국어",
+  "spoken_text": "TTS용 한국어 — 이모지/마크다운/특수기호 절대 금지, 자연스러운 말투",
   "a2ui": [
     {"version":"v0.9", "createSurface": {"surfaceId":"고유ID", "catalogId":"카탈로그URL"}},
     {"version":"v0.9", "updateComponents": {"surfaceId":"고유ID", "components":[...]}}
@@ -377,6 +377,7 @@ class Handler(SimpleHTTPRequestHandler):
 7. updateDataModel은 사용하지 않음 — 데이터를 component 속성에 직접 flat으로 포함
 8. 실시간 데이터([실시간 데이터] 섹션)는 반드시 그대로 사용 — 값을 임의로 만들지 말 것!
 9. 요청당 카드 1개 (사용자가 복수 요청 시만 예외)
+10. spoken_text에 이모지/마크다운(**bold** 등)/특수기호 절대 사용 금지 — TTS로 읽히므로 순수 텍스트만
 
 ## 카탈로그
 
