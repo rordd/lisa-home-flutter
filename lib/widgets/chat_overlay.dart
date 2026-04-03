@@ -10,6 +10,33 @@ import '../theme/tv_theme.dart';
 
 String _stripHtml(String s) => s.replaceAll(RegExp(r'<[^>]*>'), '').trim();
 
+/// **bold**, *italic* 을 TextSpan 으로 파싱
+List<TextSpan> _parseMarkdown(String text, TextStyle base) {
+  final spans = <TextSpan>[];
+  // **bold** 또는 *italic* 또는 일반 텍스트
+  final re = RegExp(r'\*\*(.+?)\*\*|\*(.+?)\*');
+  int cursor = 0;
+  for (final m in re.allMatches(text)) {
+    if (m.start > cursor) {
+      spans.add(TextSpan(text: text.substring(cursor, m.start), style: base));
+    }
+    if (m.group(1) != null) {
+      spans.add(TextSpan(
+          text: m.group(1),
+          style: base.copyWith(fontWeight: FontWeight.bold)));
+    } else if (m.group(2) != null) {
+      spans.add(TextSpan(
+          text: m.group(2),
+          style: base.copyWith(fontStyle: FontStyle.italic)));
+    }
+    cursor = m.end;
+  }
+  if (cursor < text.length) {
+    spans.add(TextSpan(text: text.substring(cursor), style: base));
+  }
+  return spans.isEmpty ? [TextSpan(text: text, style: base)] : spans;
+}
+
 /// ─────────────────────────────────────────────
 /// 채팅 오버레이 — Glass panel, typography-led
 /// ─────────────────────────────────────────────
@@ -183,11 +210,20 @@ class _ChatOverlayState extends State<ChatOverlay> {
               ),
               child: message.isLoading
                   ? _buildLoadingIndicator()
-                  : Text(_stripHtml(message.content),
-                      style: TVTheme.bodyLarge.copyWith(
+                  : Builder(builder: (context) {
+                      final style = TVTheme.bodyLarge.copyWith(
                         color: isUser ? Colors.white : TVTheme.textPrimary,
                         fontSize: 22,
-                      )),
+                      );
+                      final cleaned = _stripHtml(message.content);
+                      return isUser
+                          ? Text(cleaned, style: style)
+                          : RichText(
+                              text: TextSpan(
+                                children: _parseMarkdown(cleaned, style),
+                              ),
+                            );
+                    }),
             ),
           ),
         ],
