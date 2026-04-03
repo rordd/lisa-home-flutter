@@ -30,6 +30,9 @@ flutter_tv_a2ui/.pub/
 # gstack
 .gstack/
 
+# Claude Code settings (may contain secrets)
+.claude/
+
 # Generated webapps
 webapps/*.html
 
