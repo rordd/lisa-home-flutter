@@ -434,6 +434,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final variant = (data?['variant'] as String?) ?? (data?['usageHint'] as String?) ?? 'youtube';
         return variant == 'movie' ? _GridSpan.wl : _GridSpan.w; // movie=4×2, youtube=4×1
       case 'PlaceRailCard': return _GridSpan.w;   // 4×1 full-width rail
+      case 'MapCard': return _GridSpan.l;          // 2×2 지도+장소목록
       case 'HomeControlCard': return _GridSpan.l;    // 2×2 상세
       case 'ArticleListCard': return _GridSpan.m;  // 2×1 표준
       case 'ContextCard':

@@ -409,6 +409,7 @@ List<CatalogItem> tvCatalogItems() => [
   _deviceDetailCard(),
   _mediaRailCard(),
   _placeRailCard(),
+  _mapCard(),
   _articleListCard(),
   _articleSummaryCard(),
   _reviewSummaryCard(),
@@ -1187,7 +1188,129 @@ CatalogItem _placeRailCard() => CatalogItem(
 );
 
 // ══════════════════════════════════════════════════
-// 6. ArticleListCard (블로그/뉴스 리스트)
+// 6. MapCard (지도 + 장소 목록)
+// ══════════════════════════════════════════════════
+CatalogItem _mapCard() => CatalogItem(
+  name: 'MapCard',
+  dataSchema: S.object(properties: {
+    'title': S.string(),
+    'map_url': S.string(),
+    'places': S.list(items: S.object(properties: {
+      'name': S.string(), 'cat': S.string(), 'address': S.string(),
+      'url': S.string(), 'hue': S.integer(),
+    })),
+  }),
+  widgetBuilder: (ctx) {
+    final d = ctx.data as Map<String, dynamic>? ?? {};
+    final title = d['title'] as String? ?? '장소 검색';
+    final mapUrl = d['map_url'] as String? ?? '';
+    final places = (d['places'] as List<dynamic>?)
+        ?.map((i) => Map<String, dynamic>.from(i as Map))
+        .toList() ?? [];
+
+    return Container(
+      decoration: glassBox(),
+      clipBehavior: Clip.antiAlias,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // 타이틀
+        Padding(
+          padding: const EdgeInsets.fromLTRB(TV.padding, 16, TV.padding, 10),
+          child: Text(title, style: TV.h2),
+        ),
+        // 지도 이미지
+        Expanded(
+          flex: 5,
+          child: mapUrl.isNotEmpty
+            ? Image.network(
+                mapUrl,
+                fit: BoxFit.cover,
+                width: double.infinity,
+                errorBuilder: (_, __, ___) => _mapPlaceholder(),
+              )
+            : _mapPlaceholder(),
+        ),
+        // 장소 목록
+        Expanded(
+          flex: 3,
+          child: places.isEmpty
+            ? const SizedBox.shrink()
+            : ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: TV.padding, vertical: 10),
+                itemCount: places.length,
+                itemBuilder: (_, i) {
+                  final p = places[i];
+                  final hue = (_parseHue(p['hue'], i * 50 + 180) % 360).toDouble();
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: Listener(
+                        behavior: HitTestBehavior.opaque,
+                        onPointerUp: (_) {
+                          _dispatchAction(null, p['url'] as String?, ctx.dispatchEvent, 'map_place_$i');
+                        },
+                        child: Container(
+                          width: 180,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(TV.radiusMd),
+                            color: Colors.white.withOpacity(TV.overlayLight),
+                            border: Border.all(color: Colors.white.withOpacity(TV.overlayMedium)),
+                          ),
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            // 번호 + 이름
+                            Row(children: [
+                              Container(
+                                width: 22, height: 22,
+                                decoration: BoxDecoration(
+                                  color: HSLColor.fromAHSL(1, hue, 0.7, 0.45).toColor(),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Center(
+                                  child: Text('${i + 1}',
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.white)),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(p['name'] as String? ?? '',
+                                  style: TV.caption.copyWith(fontWeight: FontWeight.w700, color: TV.text),
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
+                              ),
+                            ]),
+                            const SizedBox(height: 6),
+                            Text(p['cat'] as String? ?? '',
+                              style: TV.small.copyWith(color: TV.textSub),
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                            if ((p['address'] as String?)?.isNotEmpty == true) ...[
+                              const SizedBox(height: 4),
+                              Text(p['address'] as String,
+                                style: TV.small.copyWith(color: TV.textSub.withOpacity(0.7)),
+                                maxLines: 2, overflow: TextOverflow.ellipsis),
+                            ],
+                          ]),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+        ),
+      ]),
+    );
+  },
+);
+
+Widget _mapPlaceholder() => Container(
+  color: const Color(0xFF1d2c4d),
+  child: const Center(
+    child: Icon(Icons.map_rounded, size: 48, color: Colors.white24),
+  ),
+);
+
+// ══════════════════════════════════════════════════
+// 7. ArticleListCard (블로그/뉴스 리스트)
 // ══════════════════════════════════════════════════
 CatalogItem _articleListCard() => CatalogItem(
   name: 'ArticleListCard',

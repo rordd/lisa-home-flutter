@@ -43,6 +43,9 @@ AZURE_MODEL = ENV.get("AZURE_MODEL", "gpt-5.4")
 AZURE_API_VERSION = ENV.get("AZURE_API_VERSION", "2025-04-01-preview")
 AZURE_URL = f"https://{AZURE_IP}/openai/responses?api-version={AZURE_API_VERSION}"
 
+KAKAO_KEY = ENV.get("KAKAO_REST_API_KEY", "")
+GOOGLE_MAPS_KEY = ENV.get("GOOGLE_MAPS_API_KEY", "")
+
 WEBAPPS_DIR = str(BASE_DIR / "webapps")
 STATIC_DIR = str(BASE_DIR / "build" / "web")
 os.makedirs(WEBAPPS_DIR, exist_ok=True)
@@ -164,6 +167,8 @@ class Handler(SimpleHTTPRequestHandler):
 
         # WebappCard html_code → 서버에 업로드하고 URL 추가
         self._process_webapp_cards(a2ui_messages)
+        # MapCard → 카카오 장소 검색 + 구글 지도 URL 주입
+        self._enrich_map_cards(a2ui_messages)
 
         self._json_response(200, {
             "version": "v0.9",
@@ -394,7 +399,8 @@ class Handler(SimpleHTTPRequestHandler):
 | 뭐 입지/옷 | ContextCard |
 | 유튜브/영상/리뷰 영상 | MediaRailCard(variant:"youtube") |
 | 영화/넷플릭스/드라마 | MediaRailCard(variant:"movie") |
-| 맛집/카페/식당 | PlaceRailCard |
+| 맛집/카페/식당 (지도 포함 원할 때) | MapCard |
+| 맛집/카페/식당 (지도 없이 목록만) | PlaceRailCard |
 | 뉴스/기사/블로그 | ArticleListCard |
 | 기사 요약 | ArticleSummaryCard |
 | 리뷰 요약 | ReviewSummaryCard |
@@ -486,6 +492,11 @@ catalogId는 `''' + BASIC_CATALOG_ID + '''`를 사용합니다.
 
 ### MediaRailCard
 - variant: "youtube"|"movie", items: [{title, sub, dur, url, hue}]
+
+### MapCard — 지도 + 장소 목록 (2×2 대형 카드)
+`{"id":"root","component":"MapCard","title":"강남 디저트 맛집 TOP3","query":"강남 디저트 카페"}`
+- query 필드만 넣으면 서버가 카카오 검색으로 자동 채워줌 (places, map_url 직접 넣지 말 것)
+- 맛집/카페/관광지 + 지도 함께 보여줄 때 사용
 
 ### PlaceRailCard
 - places: [{name, cat, rating, badge, url, hue}]
@@ -723,13 +734,97 @@ catalogId는 `''' + BASIC_CATALOG_ID + '''`를 사용합니다.
         self._json_response(200, {"items": sample})
 
     # ── /api/places (맛집 — 샘플 데이터) ──────────
+    def _search_kakao_places(self, query, x=None, y=None, size=5):
+        """카카오 로컬 키워드 검색 → [{name, cat, address, lat, lng, url, phone}]"""
+        if not KAKAO_KEY:
+            return []
+        params = f"query={urllib.request.quote(query)}&size={size}"
+        if x and y:
+            params += f"&x={x}&y={y}&radius=3000&sort=distance"
+        url = f"https://dapi.kakao.com/v2/local/search/keyword.json?{params}"
+        req = urllib.request.Request(url, headers={"Authorization": f"KakaoAK {KAKAO_KEY}"})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+            results = []
+            for d in data.get("documents", []):
+                cat = d.get("category_name", "")
+                # 카테고리 마지막 항목만 (ex: "음식점 > 카페" → "카페")
+                short_cat = cat.split(" > ")[-1] if " > " in cat else cat
+                results.append({
+                    "name": d.get("place_name", ""),
+                    "cat": short_cat,
+                    "address": d.get("road_address_name") or d.get("address_name", ""),
+                    "lat": float(d.get("y", 0)),
+                    "lng": float(d.get("x", 0)),
+                    "url": d.get("place_url", ""),
+                    "phone": d.get("phone", ""),
+                })
+            return results
+        except Exception as e:
+            print(f"[Kakao] search error: {e}")
+            return []
+
+    def _build_map_url(self, places, w=640, h=300):
+        """Google Static Maps URL — 번호 마커 포함"""
+        if not GOOGLE_MAPS_KEY or not places:
+            return None
+        # 중심: 첫 번째 장소 기준
+        center_lat = sum(p["lat"] for p in places) / len(places)
+        center_lng = sum(p["lng"] for p in places) / len(places)
+        markers = ""
+        for i, p in enumerate(places, 1):
+            label = str(i)
+            markers += f"&markers=color:0x1DB954|label:{label}|{p['lat']},{p['lng']}"
+        return (
+            f"https://maps.googleapis.com/maps/api/staticmap"
+            f"?center={center_lat},{center_lng}&zoom=14"
+            f"&size={w}x{h}&scale=2"
+            f"&style=element:geometry|color:0x1d2c4d"
+            f"&style=element:labels.text.fill|color:0x8ec3b9"
+            f"&style=feature:road|element:geometry|color:0x304a7d"
+            f"&style=feature:water|element:geometry|color:0x0e1626"
+            f"{markers}&key={GOOGLE_MAPS_KEY}"
+        )
+
+    def _enrich_map_cards(self, a2ui_messages):
+        """MapCard 컴포넌트에 카카오 검색 결과 + 지도 URL 주입"""
+        for msg in a2ui_messages:
+            if "updateComponents" not in msg:
+                continue
+            for comp in msg["updateComponents"].get("components", []):
+                if comp.get("component") != "MapCard":
+                    continue
+                query = comp.get("query", comp.get("title", ""))
+                if not query:
+                    continue
+                places = self._search_kakao_places(query)
+                if not places:
+                    continue
+                # hue 할당
+                hues = [200, 140, 30, 270, 10]
+                for i, p in enumerate(places):
+                    p["hue"] = hues[i % len(hues)]
+                comp["places"] = places
+                comp["map_url"] = self._build_map_url(places) or ""
+        return a2ui_messages
+
     def _handle_places(self):
-        sample = [
-            {"name": "을지로 골목식당", "cat": "한식 · 을지로", "rating": 4.7, "badge": "예약 가능", "url": "https://map.naver.com", "hue": 25},
-            {"name": "스시 오마카세 린", "cat": "일식 · 압구정", "rating": 4.9, "badge": "인기", "url": "https://map.naver.com", "hue": 200},
-            {"name": "트라토리아 봉골레", "cat": "이탈리안 · 이태원", "rating": 4.5, "badge": "", "url": "https://map.naver.com", "hue": 10},
-        ]
-        self._json_response(200, {"places": sample})
+        params = {}
+        if "?" in self.path:
+            qs = self.path.split("?", 1)[1]
+            for part in qs.split("&"):
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    params[k] = urllib.request.unquote(v)
+        query = params.get("query", "맛집")
+        places = self._search_kakao_places(query)
+        if not places:
+            places = [
+                {"name": "을지로 골목식당", "cat": "한식", "address": "서울 중구 을지로", "lat": 37.566, "lng": 126.990, "url": "", "hue": 25},
+                {"name": "스시 오마카세 린", "cat": "일식", "address": "서울 강남구 압구정", "lat": 37.527, "lng": 127.028, "url": "", "hue": 200},
+            ]
+        self._json_response(200, {"places": places})
 
     # ── /api/webapp ─────────────────────────────
     def _handle_webapp(self):
