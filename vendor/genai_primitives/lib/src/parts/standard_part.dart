@@ -6,12 +6,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
-import 'package:cross_file/cross_file.dart' show XFile;
 import 'package:meta/meta.dart';
-import 'package:mime/mime.dart';
-// ignore: implementation_imports
-import 'package:mime/src/default_extension_map.dart';
-import 'package:path/path.dart' as p;
 
 import 'model.dart';
 
@@ -116,34 +111,6 @@ final class DataPart extends StandardPart {
     );
   }
 
-  /// Creates a data part from an [XFile].
-  static Future<DataPart> fromFile(XFile file) async {
-    final Uint8List bytes = await file.readAsBytes();
-    final String? name = _nameFromPath(file.path) ?? _emptyNull(file.name);
-    final String mimeType =
-        _emptyNull(file.mimeType) ??
-        mimeTypeForFile(
-          name ?? '',
-          headerBytes: Uint8List.fromList(
-            bytes.take(defaultMagicNumbersMaxLength).toList(),
-          ),
-        );
-
-    return DataPart(bytes, mimeType: mimeType, name: name);
-  }
-
-  static String? _nameFromPath(String? path) {
-    if (path == null || path.isEmpty) return null;
-    final Uri? url = Uri.tryParse(path);
-    if (url == null) return p.basename(path);
-    final List<String> segments = url.pathSegments;
-    if (segments.isEmpty) return null;
-    return segments.last;
-  }
-
-  static String? _emptyNull(String? value) =>
-      value == null || value.isEmpty ? null : value;
-
   /// The binary data.
   final Uint8List bytes;
 
@@ -185,28 +152,10 @@ final class DataPart extends StandardPart {
   @visibleForTesting
   static const defaultMimeType = 'application/octet-stream';
 
-  /// Gets the MIME type for a file.
-  @visibleForTesting
-  static String mimeTypeForFile(String path, {Uint8List? headerBytes}) =>
-      lookupMimeType(path, headerBytes: headerBytes) ?? defaultMimeType;
-
   /// Gets the name for a MIME type.
   @visibleForTesting
   static String nameFromMimeType(String mimeType) {
-    final String ext = extensionFromMimeType(mimeType) ?? 'bin';
-    return mimeType.startsWith('image/') ? 'image.$ext' : 'file.$ext';
-  }
-
-  /// Gets the extension for a MIME type.
-  @visibleForTesting
-  static String? extensionFromMimeType(String mimeType) {
-    final String ext = defaultExtensionMap.entries
-        .firstWhere(
-          (e) => e.value == mimeType,
-          orElse: () => const MapEntry('', ''),
-        )
-        .key;
-    return ext.isNotEmpty ? ext : null;
+    return mimeType.startsWith('image/') ? 'image.bin' : 'file.bin';
   }
 }
 

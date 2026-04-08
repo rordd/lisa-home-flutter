@@ -7,8 +7,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:json_schema_builder/json_schema_builder.dart';
 import 'package:genui/genui.dart';
 import 'package:url_launcher/url_launcher.dart';
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:js' as js;
 
 /// a2ui v0.9 TV 카탈로그 — TV Dark Theme + Focus System
 
@@ -83,23 +81,7 @@ String? _extractYoutubeId(String url) {
 void openUrl(String url) {
   // Public: used by home_screen.dart for action dispatch handling
   print('[CATALOG] Opening URL: $url');
-  // Flutter 웹에서는 url_launcher 대신 JS interop으로 직접 열기
-  if (kIsWeb) {
-    _openUrlWeb(url);
-  } else {
-    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-  }
-}
-
-// Flutter 웹 전용: window.open 직접 호출
-void _openUrlWeb(String url) {
-  try {
-    js.context.callMethod('open', [url, '_blank']);
-    print('[CATALOG] Opened via JS: $url');
-  } catch (e) {
-    print('[CATALOG] JS open error: $e');
-    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-  }
+  launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
 }
 
 /// action 모델 기반 이벤트 디스패치 (openUrl, launchApp 등)

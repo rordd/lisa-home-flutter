@@ -31,6 +31,8 @@ dependency_overrides:
     path: vendor/genai_primitives
   json_schema_builder:
     path: vendor/json_schema_builder
+  flutter_markdown_plus:
+    path: vendor/flutter_markdown_plus
 
 dev_dependencies:
   flutter_test:
