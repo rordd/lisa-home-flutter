@@ -1,0 +1,107 @@
+// Copyright 2025 The Flutter Authors.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+import 'package:flutter/material.dart';
+import 'package:json_schema_builder/json_schema_builder.dart';
+
+import 'data_model.dart';
+import 'ui_models.dart';
+
+/// A callback to get a component definition by its ID.
+typedef GetComponentCallback = Component? Function(String componentId);
+
+/// A callback that builds a child widget for a catalog item.
+typedef ChildBuilderCallback =
+    Widget Function(String id, [DataContext? dataContext]);
+
+/// A callback that builds an example of a catalog item.
+///
+/// The returned string must be a valid JSON representation of a list of
+/// [Component] objects. One of the components in the list must have the `id`
+/// 'root'.
+typedef ExampleBuilderCallback = String Function();
+
+/// A callback that builds a widget for a catalog item.
+typedef CatalogWidgetBuilder = Widget Function(CatalogItemContext itemContext);
+
+/// Context provided to a [CatalogItem]'s widget builder.
+///
+/// This class encapsulates all the information and callbacks needed to build
+/// a catalog widget, including access to the widget's data, its position in
+/// the component tree, and mechanisms for building children and dispatching
+/// events.
+class CatalogItemContext {
+  /// Creates a [CatalogItemContext] with the required parameters.
+  ///
+  /// All parameters are required to ensure the widget builder has complete
+  /// context for rendering and interaction.
+  CatalogItemContext({
+    required this.data,
+    required this.id,
+    required this.buildChild,
+    required this.dispatchEvent,
+    required this.buildContext,
+    required this.dataContext,
+    required this.getComponent,
+    required this.surfaceId,
+  });
+
+  /// The parsed data for this component from the AI-generated definition.
+  final Object data;
+
+  /// The unique identifier for this component instance.
+  final String id;
+
+  /// Callback to build a child widget by its component ID.
+  final ChildBuilderCallback buildChild;
+
+  /// Callback to dispatch UI events (e.g., button taps) back to the system.
+  final DispatchEventCallback dispatchEvent;
+
+  /// The Flutter [BuildContext] for this widget.
+  final BuildContext buildContext;
+
+  /// The [DataContext] for accessing and modifying the data model.
+  final DataContext dataContext;
+
+  /// Callback to retrieve a component definition by its ID.
+  final GetComponentCallback getComponent;
+
+  /// The ID of the surface this component belongs to.
+  final String surfaceId;
+}
+
+/// Defines a UI layout type, its schema, and how to build its widget.
+@immutable
+class CatalogItem {
+  /// Creates a new [CatalogItem].
+  const CatalogItem({
+    required this.name,
+    required this.dataSchema,
+    required this.widgetBuilder,
+    this.exampleData = const [],
+  });
+
+  /// The widget type name used in JSON, e.g., 'TextChatMessage'.
+  final String name;
+
+  /// The schema definition for this widget's data.
+  final Schema dataSchema;
+
+  /// The builder for this widget.
+  final CatalogWidgetBuilder widgetBuilder;
+
+  /// A list of builder functions that each return a JSON string representing an
+  /// example usage of this widget.
+  ///
+  /// Each returned string must be a valid JSON representation of a list of
+  /// [Component] objects. For the example to be renderable, one of the
+  /// components in the list must have the `id` 'root', which will be used as
+  /// the entry point for rendering.
+  ///
+  /// To catch real data returned by the AI for debugging or creating new
+  /// examples, [configure logging](https://github.com/flutter/genui/blob/main/packages/genui/README.md#how-can-i-configure-logging)
+  /// to `Level.ALL` and search for the string `"definition": {` in the logs.
+  final List<ExampleBuilderCallback> exampleData;
+}

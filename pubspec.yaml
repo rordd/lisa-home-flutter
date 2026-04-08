@@ -22,8 +22,15 @@ dependencies:
   lottie: ^3.0.0
   url_launcher: ^6.2.0
   flutter_widget_from_html: ^0.15.2
-  genui: ^0.7.0
+  genui:
+    path: vendor/genui
   web_socket_channel: ^3.0.0
+
+dependency_overrides:
+  genai_primitives:
+    path: vendor/genai_primitives
+  json_schema_builder:
+    path: vendor/json_schema_builder
 
 dev_dependencies:
   flutter_test:
