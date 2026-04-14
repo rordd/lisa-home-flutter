@@ -25,6 +25,11 @@ dependencies:
   genui:
     path: vendor/genui
   web_socket_channel: ^3.0.0
+  webos_service_bridge:
+    git:
+      url: ssh://wall.lge.com:29448/module/flutter-webos-plugins
+      path: packages/webos_service_bridge/
+      ref: master
 
 dependency_overrides:
   genai_primitives:

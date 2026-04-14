@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' show ImageFilter;
+import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:webos_service_bridge/webos_service_bridge.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:genui/genui.dart';
 import '../catalog/tv_catalog.dart';
@@ -25,7 +27,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final LisaWsContentGenerator _contentGenerator;
   late final A2uiMessageProcessor _processor;
   late final GenUiConversation _conversation;
@@ -68,10 +70,27 @@ class _HomeScreenState extends State<HomeScreen> {
   _GridSpan? _spotlightSpan;    // spotlight 카드의 원래 span
   String? _spotlightTypeName;   // spotlight 카드의 타입명
 
+  // 위젯 선반
+  final List<_RenderedCard> _widgetCards = [];
+  bool _widgetVisible = false;
+  bool _overlayFromWidget = false;
+
+  // Shake 감지 (좌우 방향키 빠른 연속)
+  int _shakeCount = 0;
+  DateTime? _lastShakeTime;
+
+  static const _webosSystemChannel = MethodChannel('webos/system');
+
   @override
   void initState() {
     super.initState();
-    _contentGenerator = LisaWsContentGenerator('ws://192.168.0.3:42618/app');
+    if (!kIsWeb) {
+      WidgetsBinding.instance.addObserver(this);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _setInputCapture('edge');
+      });
+    }
+    _contentGenerator = LisaWsContentGenerator('ws://10.157.89.194:42618/app');
 
     final basicCatalog = CoreCatalogItems.asCatalog();
     final tvCatalog = Catalog(
@@ -133,6 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
               _spotlightSurfaceId = '__text__';
               _spotlightSpan = _GridSpan.m;
               _spotlightTypeName = '_AiCommentCard';
+              if (!kIsWeb) _setInputCapture('full');
             } else {
               // 실제 카드가 spotlight에 있으면 옆에 코멘트 표시
               _spotlightText = text;
@@ -160,6 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _spotlightSurfaceId = null;
             _spotlightText = '';
             setState(() {});
+            if (!kIsWeb) _setInputCapture(_widgetVisible ? 'full' : 'edge');
           },
         );
         _spotlightSurfaceId = _errorSurfaceId;
@@ -167,21 +188,26 @@ class _HomeScreenState extends State<HomeScreen> {
         _spotlightTypeName = '_ErrorCard';
         _spotlightText = '오류가 발생했어요.';
         setState(() {});
+        if (!kIsWeb) _setInputCapture('full');
       },
     );
 
     _conversation.isProcessing.addListener(_onProcessingChanged);
+    HardwareKeyboard.instance.addHandler(_handleKeyShake);
+    // inputRegions는 앱 시작 직후 Wayland surface가 준비된 후에만 호출 가능.
+    // 초기 상태는 embedder 기본값(full capture) 유지.
+    // 패널 닫힘/spotlight 해제 시점에 edge로 전환.
 
     // 기기 세부카드 콜백
     onDeviceDetailRequested = (device) {
       final detailWidget = DeviceDetailWidget(device: device);
-      _renderedCards.insert(0, _RenderedCard(
+      _widgetCards.insert(0, _RenderedCard(
         surfaceId: 'detail_${device['id'] ?? 'unknown'}',
         typeName: 'DeviceDetailCard',
         span: _GridSpan.s,
         widget: detailWidget,
       ));
-      _trimCardsToFit();
+      _trimWidgetCards();
       setState(() {});
     };
   }
@@ -192,12 +218,13 @@ class _HomeScreenState extends State<HomeScreen> {
       _elapsedTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         setState(() => _elapsedSeconds++);
       });
-      // Ghost Card를 spotlight 위치에 표시
+      // Ghost Card를 spotlight 위치에 표시 + 전체 input 캡처
       _spotlightCard = const _GhostCard();
       _spotlightSurfaceId = _ghostSurfaceId;
       _spotlightSpan = _GridSpan.s;
       _spotlightTypeName = '_GhostCard';
       _spotlightText = '';
+      if (!kIsWeb) _setInputCapture('full');
     } else {
       _elapsedTimer?.cancel();
       _elapsedTimer = null;
@@ -205,6 +232,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_spotlightSurfaceId == _ghostSurfaceId) {
         _spotlightCard = null;
         _spotlightSurfaceId = null;
+        if (!kIsWeb && !_widgetVisible) _setInputCapture('edge');
       }
     }
     setState(() {});
@@ -221,33 +249,43 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Spotlight 모드에서 카드를 그리드로 내리기
+  /// Spotlight 모드에서 카드를 위젯 선반으로 내리기
   void _dismissSpotlight() {
     if (_spotlightCard == null) return;
-    // ghost/error/text-only는 그리드에 안 넣음
+    // ghost/error/text-only는 저장 안 함
     final isSpecial = _spotlightSurfaceId == _ghostSurfaceId ||
         _spotlightSurfaceId == _errorSurfaceId ||
         _spotlightSurfaceId == '__text__';
     if (!isSpecial) {
-      _renderedCards.insert(0, _RenderedCard(
+      _widgetCards.insert(0, _RenderedCard(
         surfaceId: _spotlightSurfaceId ?? 'spotlight',
         typeName: _spotlightTypeName ?? 'Unknown',
         span: _spotlightSpan ?? _GridSpan.s,
         widget: _spotlightCard!,
       ));
-      _trimCardsToFit();
+      _trimWidgetCards();
     }
     _spotlightCard = null;
     _spotlightSurfaceId = null;
     _spotlightText = '';
     _spotlightSpan = null;
     _spotlightTypeName = null;
+    // 위젯에서 요청한 카드면 위젯 뷰로 복귀
+    final returnToWidget = _overlayFromWidget;
+    if (_overlayFromWidget) _widgetVisible = true;
+    _overlayFromWidget = false;
     setState(() {});
+    // input region: 위젯 복귀 시 full, 아니면 edge
+    _setInputCapture(returnToWidget || _widgetVisible ? 'full' : 'edge');
   }
 
   @override
   void dispose() {
+    if (!kIsWeb) {
+      WidgetsBinding.instance.removeObserver(this);
+    }
     _conversation.isProcessing.removeListener(_onProcessingChanged);
+    HardwareKeyboard.instance.removeHandler(_handleKeyShake);
     _elapsedTimer?.cancel();
     _toastTimer?.cancel();
     _newestDimTimer?.cancel();
@@ -255,6 +293,128 @@ class _HomeScreenState extends State<HomeScreen> {
     _inputFocus.dispose();
     _conversation.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    print('[LIFECYCLE] $state');
+    if (kIsWeb) return;
+    if (state == AppLifecycleState.resumed) {
+      _setInputCapture(_widgetVisible || _spotlightCard != null ? 'full' : 'edge');
+    }
+  }
+
+  Future<void> _setInputCapture(String mode) async {
+    try {
+      final List<int> regions;
+      if (mode == 'full') {
+        regions = [0, 0, 1920, 1080];
+      } else if (mode == 'edge') {
+        regions = [1904, 480, 1920, 600];
+      } else {
+        regions = [];
+      }
+      await _webosSystemChannel.invokeMethod('inputRegions', {"regions": regions});
+      // edge: 뒤 카드 앱이 키 받음 / full: 이 앱이 키 받음
+      _webosSystemChannel.invokeMethod('windowProperty',
+          {'property': 'needFocus', 'value': mode == 'full' ? 'true' : 'false'}).catchError((_) {});
+      print('[WIN] inputRegions=$mode needFocus=${mode == 'full'}');
+    } catch (e) {
+      print('[WIN] inputRegions failed: $e');
+    }
+  }
+
+  /// 앱 런칭 후 edge 상태로 축소
+  void _collapseToEdge() {
+    _dismissSpotlight();
+    setState(() {
+      _widgetVisible = false;
+      _inputVisible = false;
+    });
+    _setInputCapture('edge');
+  }
+
+  /// back/escape 공통 동작 (키보드 + 마우스 우클릭 공용)
+  void _handleBackAction() {
+    if (_widgetVisible) {
+      _toggleWidgetPanel(); // 패널 닫기 → edge
+    } else if (_spotlightCard != null) {
+      _dismissSpotlight(); // spotlight 해제 → edge
+    }
+    // 이미 edge 상태: 아무것도 안 함 (floatingui는 always-on-top)
+  }
+
+  /// 위젯 패널 열기/닫기 토글 (물리 RED 키 or 엣지 핸들)
+  void _toggleWidgetPanel() {
+    if (!mounted) return;
+    if (_widgetVisible) {
+      // 닫기: 엣지 핸들 영역만 유지 → TV가 나머지 입력 받음
+      setState(() {
+        _widgetVisible = false;
+        _inputVisible = false;
+      });
+      _setInputCapture(_spotlightCard != null ? 'full' : 'edge');
+    } else {
+      // 열기: 전체화면 캡처, 키보드는 안 띄움 (마이크 버튼으로 대체)
+      setState(() {
+        _widgetVisible = true;
+        _inputVisible = false;
+      });
+      _setInputCapture('full');
+    }
+  }
+
+  /// HardwareKeyboard 글로벌 핸들러
+  /// - RED 키(F1 or 빨간 버튼) → 위젯 패널 토글
+  /// - 좌우 방향키 4회 800ms 내 → spotlight dismiss
+  bool _handleKeyShake(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+
+    // webOS: 알 수 없는 키는 keyId를 로깅 (디버그)
+    final key = event.logicalKey;
+    final keyId = key.keyId;
+    print('[KEY] logicalKey=$key keyId=0x${keyId.toRadixString(16)} physical=${event.physicalKey}');
+
+    // RED 키: webOS Magic Remote 빨간 버튼
+    // LGE webOS 에서는 KEY_RED(398)가 F1 또는 keyId=0x10600000020로 매핑될 수 있음
+    final isRedKey = key == LogicalKeyboardKey.f1 ||
+        keyId == 0x10600000020 || // webOS KEY_RED custom
+        keyId == 398;             // Linux keycode fallback
+    if (isRedKey) {
+      _toggleWidgetPanel();
+      return true;
+    }
+
+    // BACK / ESC 키: webOS X버튼, Back키
+    // → 패널/spotlight 닫기. 이미 edge 상태면 앱 종료 없이 그대로 유지.
+    final isBackKey = key == LogicalKeyboardKey.escape ||
+        key == LogicalKeyboardKey.goBack ||
+        keyId == 0x00100000305; // webOS KEY_BACK
+    if (isBackKey) {
+      _handleBackAction();
+      return true; // 이벤트 소비 — Flutter 기본 종료 동작 방지
+    }
+
+    // 좌우 방향키 4회 이내 800ms → spotlight dismiss
+    if (_spotlightCard == null) return false;
+    final isLR = key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight;
+    if (!isLR) return false;
+    final now = DateTime.now();
+    if (_lastShakeTime == null ||
+        now.difference(_lastShakeTime!) > const Duration(milliseconds: 800)) {
+      _shakeCount = 1;
+    } else {
+      _shakeCount++;
+    }
+    _lastShakeTime = now;
+    if (_shakeCount >= 4) {
+      _shakeCount = 0;
+      _lastShakeTime = null;
+      _dismissSpotlight();
+      return true;
+    }
+    return false;
   }
 
   // ── 카드 이벤트 처리 (퀴즈 답변, URL 열기, 앱 런칭 등) ─────────
@@ -268,13 +428,25 @@ class _HomeScreenState extends State<HomeScreen> {
       case 'openUrl':
         final url = event.context['url'] as String?;
         print('[ACTION] $typeName openUrl: $url');
-        if (url != null) openUrl(url);
+        if (url != null) {
+          openUrl(url);
+          _collapseToEdge();
+        }
       case 'launchApp':
         final appId = event.context['appId'] as String?;
-        print('[ACTION] $typeName launchApp: $appId');
-        // TV 앱 런칭 (향후 luna-send 등으로 확장 가능)
-        // fallback: URL이면 openUrl
-        if (appId != null && appId.startsWith('http')) openUrl(appId);
+        final params = Map<String, dynamic>.from(
+            event.context['params'] as Map? ?? {});
+        print('[ACTION] $typeName launchApp: $appId params=$params');
+        if (appId == null) break;
+        if (appId.startsWith('http')) {
+          openUrl(appId);
+        } else if (!kIsWeb) {
+          WebOSServiceBridge.callOneReply(WebOSServiceData(
+            'luna://com.palm.applicationManager/launch',
+            payload: {'id': appId, if (params.isNotEmpty) 'params': params},
+          ));
+        }
+        _collapseToEdge();
       default:
         print('[ACTION] $typeName unknown: ${event.name} ${event.context}');
     }
@@ -292,6 +464,9 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() => _inputVisible = false);
       return;
     }
+    // 위젯 뷰에서 요청 시 기록 후 위젯 닫기
+    _overlayFromWidget = _widgetVisible;
+    if (_widgetVisible) setState(() => _widgetVisible = false);
     // 다음 요청 시 이전 spotlight 자동 해제
     _dismissSpotlight();
     _conversation.sendRequest(UserMessage.text(text.trim()));
@@ -423,6 +598,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     _trimCardsToFit();
     setState(() {});
+    // 카드가 spotlight에 나타났으므로 전체 입력 캡처
+    if (!kIsWeb) _setInputCapture('full');
   }
 
   _GridSpan _gridSpan(String typeName, [Map<String, dynamic>? data]) {
@@ -459,6 +636,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _trimWidgetCards() {
+    while (_widgetCards.length > 12) {
+      _widgetCards.removeLast();
+    }
+  }
+
   /// 그리드에 맞지 않는 카드는 _buildCards에서 자동 스킵됨 (별도 trim 불필요)
 
   // ── JSON 다이얼로그 ─────────────────────────
@@ -492,25 +675,20 @@ class _HomeScreenState extends State<HomeScreen> {
   // ═══════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
+    return PopScope(
+      canPop: false, // 백 버튼으로 앱 종료 차단 — edge 모드 유지
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (event) {
+          // 마우스 오른쪽 버튼 = back 동작 (패널/spotlight 닫기 → edge)
+          if (event.buttons == kSecondaryMouseButton) _handleBackAction();
+        },
+        child: Scaffold(
+      backgroundColor: Colors.transparent,
       body: SizedBox.expand(
         child: Stack(children: [
-          // 배경 월페이퍼 (선명하게, 블러 없음)
-          Positioned.fill(child: _TVWallpaper()),
-
-          // 카드 영역 (그리드) — spotlight 시 흐리게
-          if (_renderedCards.isNotEmpty)
-            Positioned(left: 48, top: 24, right: 48, bottom: 16,
-              child: AnimatedOpacity(
-                opacity: _spotlightCard != null ? 0.15 : 1.0,
-                duration: const Duration(milliseconds: 400),
-                child: _buildCards(),
-              ),
-            ),
-
           // ── Spotlight 레이어 (새 카드 전면 가운데) ──
-          // 바깥 클릭 시 spotlight 해제 (카드를 그리드로 내림)
+          // 바깥 클릭 시 spotlight 해제 (카드를 위젯 선반으로 내림)
           if (_spotlightCard != null)
             Positioned.fill(
               child: GestureDetector(
@@ -520,56 +698,47 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-          // 상단 우측: JSON 보기 + 입력 토글
-          Positioned(top: 24, right: 48, child: Row(children: [
-            // JSON 보기 버튼
-            if (_contentGenerator.lastRawJson != null)
-              GestureDetector(
-                onTap: _showJsonDialog,
+          // ── 위젯 선반 (저장된 카드 뷰) ──
+          if (_widgetVisible)
+            Positioned.fill(child: _buildWidgetShelf())
+                .animate()
+                .fadeIn(duration: 300.ms, curve: Curves.easeOutCubic),
+
+          // 상단 우측: 입력 토글 — spotlight 활성 상태에서만 표시
+          // spotlight 활성 시: 우상단 마이크 버튼만 표시
+          if (_spotlightCard != null && !_widgetVisible)
+            Positioned(
+              top: 24, right: 48,
+              child: GestureDetector(
+                onTap: () => setState(() {
+                  _inputVisible = !_inputVisible;
+                  if (_inputVisible) Future.delayed(100.ms, () => _inputFocus.requestFocus());
+                }),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  margin: const EdgeInsets.only(right: 8),
+                  width: 44, height: 44,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.06),
-                    borderRadius: BorderRadius.circular(20)),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.data_object_rounded, size: 14, color: TV.accent.withOpacity(0.7)),
-                    const SizedBox(width: 4),
-                    Text('JSON', style: TextStyle(fontSize: 22, color: TV.accent.withOpacity(0.7))),
-                  ]),
+                    color: _inputVisible ? TV.accent.withOpacity(0.2) : Colors.white.withOpacity(0.08),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: _inputVisible ? TV.accent.withOpacity(0.4) : Colors.white.withOpacity(0.1))),
+                  child: Icon(Icons.mic_rounded, size: 22,
+                      color: _inputVisible ? TV.accent : const Color(0xFFAAAAAA)),
                 ),
               ),
-            // 입력 토글 버튼
-            GestureDetector(
-              onTap: () => setState(() {
-                _inputVisible = !_inputVisible;
-                _popupVisible = false;
-                if (_inputVisible) Future.delayed(100.ms, () => _inputFocus.requestFocus());
-              }),
-              child: Container(
-                width: 44, height: 44,
-                decoration: BoxDecoration(
-                  color: _inputVisible ? TV.accent.withOpacity(0.2) : Colors.white.withOpacity(0.08),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: _inputVisible ? TV.accent.withOpacity(0.4) : Colors.white.withOpacity(0.1))),
-                child: Icon(Icons.mic_rounded, size: 22,
-                    color: _inputVisible ? TV.accent : const Color(0xFFAAAAAA)),
+            ),
+
+          // ── 하단 입력 바 (spotlight 상태에서만) ───────────────────────
+          if (_spotlightCard != null && !_widgetVisible)
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 400),
+              curve: _inputVisible ? Curves.easeOutBack : Curves.easeIn,
+              left: 48, right: 48,
+              bottom: _inputVisible ? 24 : -80,
+              child: AnimatedOpacity(
+                opacity: _inputVisible ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 250),
+                child: _buildBottomBar(),
               ),
             ),
-          ])),
-
-          // ── 하단 입력 바 ───────────────────────
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 400),
-            curve: _inputVisible ? Curves.easeOutBack : Curves.easeIn,
-            left: 48, right: 48,
-            bottom: _inputVisible ? 24 : -80,
-            child: AnimatedOpacity(
-              opacity: _inputVisible ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 250),
-              child: _buildBottomBar(),
-            ),
-          ),
 
           // ── 오버레이 팝업 (대화형) ────────────────
           if (_popupVisible)
@@ -582,13 +751,61 @@ class _HomeScreenState extends State<HomeScreen> {
                   duration: 300.ms,
                   curve: Curves.easeOutCubic,
                 ),
+
+          // ── 우측 엣지 핸들 (패널 닫힘 시, RED키 또는 탭으로 열기) ──
+          if (!_widgetVisible && _spotlightCard == null)
+            _buildEdgeHandle(),
         ]),
+      ),
+    ))); // Listener + PopScope + Scaffold
+  }
+
+  /// 우측 가장자리 얇은 탭 — 항상 보이는 최소 UI
+  Widget _buildEdgeHandle() {
+    final count = _widgetCards.length;
+    return Positioned(
+      right: 0,
+      top: 0,
+      bottom: 0,
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: GestureDetector(
+          onTap: _toggleWidgetPanel,
+          child: Container(
+            width: 16,
+            height: 120,
+            decoration: BoxDecoration(
+              color: count > 0
+                  ? TV.accent.withOpacity(0.55)
+                  : Colors.white.withOpacity(0.15),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(8),
+                bottomLeft: Radius.circular(8),
+              ),
+            ),
+            child: count > 0
+                ? RotatedBox(
+                    quarterTurns: 1,
+                    child: Text(
+                      '$count',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black,
+                      ),
+                    ),
+                  )
+                : null,
+          ),
+        ),
       ),
     );
   }
 
   // ── 카드 레이아웃 — 4컬럼 × 3로우 그리드 (페이지네이션) ──
-  Widget _buildCards() {
+  Widget _buildCards({List<_RenderedCard>? cards}) {
+    final cardList = cards ?? _renderedCards;
     return LayoutBuilder(builder: (context, constraints) {
       _availableHeight = constraints.maxHeight;
       final totalW = constraints.maxWidth;
@@ -596,13 +813,13 @@ class _HomeScreenState extends State<HomeScreen> {
       const gap = 16.0;
       const cols = 4;
       const rows = 3;
-      print('[GRID] constraints: ${totalW}x$totalH, cards: ${_renderedCards.length}');
+      print('[GRID] constraints: ${totalW}x$totalH, cards: ${cardList.length}');
       final cellW = (totalW - gap * (cols - 1)) / cols;
       final cellH = (totalH - gap * (rows - 1)) / rows;
 
       // 카드를 페이지별로 분배
       final pages = <List<_RenderedCard>>[];
-      var remaining = List<_RenderedCard>.from(_renderedCards);
+      var remaining = List<_RenderedCard>.from(cardList);
 
       while (remaining.isNotEmpty) {
         final grid = List.generate(rows, (_) => List.filled(cols, false));
@@ -654,22 +871,40 @@ class _HomeScreenState extends State<HomeScreen> {
         // 최신 카드가 있을 때 기존 카드는 dim 처리
         final shouldDim = _newestSurfaceId != null &&
             !isNewest && !isSpecial &&
-            _renderedCards.any((c) => c.surfaceId == _newestSurfaceId);
+            cardList.any((c) => c.surfaceId == _newestSurfaceId);
 
+        final isWidgetShelf = cardList == _widgetCards;
         positioned.add(Positioned(
           left: x, top: y, width: w, height: h,
           child: AnimatedOpacity(
             opacity: shouldDim ? 0.6 : 1.0,
             duration: const Duration(milliseconds: 500),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(24),
-              child: isNewest
-                  ? Focus(
-                      autofocus: true,
-                      child: card.widget,
-                    )
-                  : card.widget,
-            ),
+            child: Stack(children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: isNewest
+                    ? Focus(autofocus: true, child: card.widget)
+                    : card.widget,
+              ),
+              // 위젯 선반에서만 삭제 버튼
+              if (isWidgetShelf)
+                Positioned(
+                  top: 6, right: 6,
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() => _widgetCards.remove(card));
+                    },
+                    child: Container(
+                      width: 28, height: 28,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.close_rounded, size: 16, color: Colors.white70),
+                    ),
+                  ),
+                ),
+            ]),
           ),
         ));
       }
@@ -761,7 +996,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Spotlight 레이어 (카드 좌 + AI 코멘트 우) ──
   Widget _buildSpotlightLayer() {
-    return LayoutBuilder(builder: (context, constraints) {
+    final isGhost = _spotlightSurfaceId == _ghostSurfaceId;
+    return Stack(children: [
+      // 반투명 블러 배경 — ghost(로딩) 중에는 투명 유지
+      if (!isGhost)
+        Positioned.fill(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(color: Colors.black.withOpacity(0.55)),
+          ),
+        ),
+      LayoutBuilder(builder: (context, constraints) {
       final screenW = constraints.maxWidth;
       final screenH = constraints.maxHeight;
       final hasComment = _spotlightText.isNotEmpty;
@@ -773,28 +1018,30 @@ class _HomeScreenState extends State<HomeScreen> {
           : (screenW * 0.5 * spanCols / 2).clamp(300.0, screenW * 0.55); // 없으면 가운데
       final cardH = (screenH * 0.78 * spanRows.clamp(1, 2) / 2).clamp(300.0, screenH * 0.8);
 
-      // Spotlight 카드는 불투명 배경으로 감싸서 뒤 카드가 비치지 않도록
-      // GestureDetector로 카드 내부 탭이 바깥(dismiss)으로 전파되지 않게 차단
+      // ghost(로딩)이면 투명, 실제 카드면 불투명 배경
       Widget spotlightCardWrapped = GestureDetector(
-        onTap: () {}, // 카드 내부 탭 흡수 (바깥 dismiss 방지)
-        child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFF141416),
-          borderRadius: BorderRadius.circular(TV.radiusMd),
-          border: Border.all(color: Colors.white.withOpacity(0.12)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.6),
-              blurRadius: 40,
-              offset: const Offset(0, 12),
+        onTap: () {},
+        child: isGhost
+          ? SizedBox(width: cardW, height: cardH, child: _spotlightCard!)
+          : Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF141416),
+                borderRadius: BorderRadius.circular(TV.radiusMd),
+                border: Border.all(color: Colors.white.withOpacity(0.12)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.6),
+                    blurRadius: 40,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(TV.radiusMd),
+                child: SizedBox(width: cardW, height: cardH, child: _spotlightCard!),
+              ),
             ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(TV.radiusMd),
-          child: SizedBox(width: cardW, height: cardH, child: _spotlightCard!),
-        ),
-      ));
+      );
 
       // 코멘트 없으면 카드만 가운데
       if (!hasComment) {
@@ -885,7 +1132,111 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       );
-    });
+    }),
+  ]);
+  }
+
+  // ── 위젯 선반 버튼 (상단 우측 Row에 삽입) ──
+  Widget _buildWidgetButton() {
+    final count = _widgetCards.length;
+    return GestureDetector(
+      onTap: _toggleWidgetPanel,
+      child: Container(
+        width: 44, height: 44,
+        margin: const EdgeInsets.only(right: 8),
+        decoration: BoxDecoration(
+          color: count > 0 ? TV.accent.withOpacity(0.15) : Colors.white.withOpacity(0.08),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: count > 0 ? TV.accent.withOpacity(0.4) : Colors.white.withOpacity(0.1),
+          ),
+        ),
+        child: Stack(children: [
+          Center(child: Icon(
+            Icons.widgets_rounded,
+            size: 22,
+            color: count > 0 ? TV.accent : const Color(0xFFAAAAAA),
+          )),
+          if (count > 0)
+            Positioned(
+              top: 2, right: 2,
+              child: Container(
+                width: 16, height: 16,
+                decoration: const BoxDecoration(color: TV.accent, shape: BoxShape.circle),
+                child: Center(child: Text(
+                  '$count',
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.black),
+                )),
+              ),
+            ),
+        ]),
+      ),
+    );
+  }
+
+  // ── 위젯 선반 (저장된 카드 전체 화면 패널) ──
+  Widget _buildWidgetShelf() {
+    return Stack(children: [
+      // 블러 배경
+      Positioned.fill(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(color: Colors.black.withOpacity(0.78)),
+        ),
+      ),
+      // 카드 그리드
+      Positioned(
+        left: 48, top: 72, right: 48, bottom: 100,
+        child: _widgetCards.isEmpty
+            ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.widgets_outlined, size: 56, color: Colors.white.withOpacity(0.18)),
+                const SizedBox(height: 16),
+                Text('저장된 카드 없음',
+                    style: TextStyle(fontSize: 22, color: Colors.white.withOpacity(0.3))),
+              ]))
+            : _buildCards(cards: _widgetCards),
+      ),
+      // 하단 입력 바 (마이크 버튼으로 토글)
+      if (_inputVisible)
+        Positioned(
+          left: 48, right: 48, bottom: 24,
+          child: _buildBottomBar(),
+        ),
+      // 우상단: 마이크 + 닫기
+      Positioned(
+        top: 20, right: 48,
+        child: Row(children: [
+          GestureDetector(
+            onTap: () => setState(() {
+              _inputVisible = !_inputVisible;
+              if (_inputVisible) Future.delayed(100.ms, () => _inputFocus.requestFocus());
+            }),
+            child: Container(
+              width: 44, height: 44,
+              decoration: BoxDecoration(
+                color: _inputVisible ? TV.accent.withOpacity(0.2) : Colors.white.withOpacity(0.08),
+                shape: BoxShape.circle,
+                border: Border.all(
+                    color: _inputVisible ? TV.accent.withOpacity(0.4) : Colors.white.withOpacity(0.1))),
+              child: Icon(Icons.mic_rounded, size: 22,
+                  color: _inputVisible ? TV.accent : const Color(0xFFAAAAAA)),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: _toggleWidgetPanel,
+            child: Container(
+              width: 44, height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.08),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white.withOpacity(0.1))),
+              child: const Icon(Icons.close_rounded, size: 22, color: Colors.white),
+            ),
+          ),
+        ]),
+      ),
+    ]);
   }
 
   // ── AI 말풍선 (레거시, 미사용) ──────────────────
@@ -1295,9 +1646,8 @@ class _GhostCardState extends State<_GhostCard> {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
+        color: Colors.black.withOpacity(0.4),
         borderRadius: BorderRadius.circular(TV.radiusMd),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
       ),
       padding: const EdgeInsets.all(28),
       child: Column(

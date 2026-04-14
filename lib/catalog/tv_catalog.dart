@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:json_schema_builder/json_schema_builder.dart';
 import 'package:genui/genui.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:webos_service_bridge/webos_service_bridge.dart';
 
 /// a2ui v0.9 TV 카탈로그 — TV Dark Theme + Focus System
 
@@ -79,9 +80,24 @@ String? _extractYoutubeId(String url) {
 }
 
 void openUrl(String url) {
-  // Public: used by home_screen.dart for action dispatch handling
   print('[CATALOG] Opening URL: $url');
-  launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  if (!kIsWeb) {
+    // webOS: luna API로 브라우저 또는 유튜브 앱 실행
+    final isYoutube = url.contains('youtube.com') || url.contains('youtu.be');
+    if (isYoutube) {
+      WebOSServiceBridge.callOneReply(WebOSServiceData(
+        'luna://com.palm.applicationManager/launch',
+        payload: {'id': 'youtube.leanback.v4', 'params': {'contentTarget': url}},
+      ));
+    } else {
+      WebOSServiceBridge.callOneReply(WebOSServiceData(
+        'luna://com.palm.applicationManager/launch',
+        payload: {'id': 'com.webos.app.browser', 'params': {'target': url}},
+      ));
+    }
+  } else {
+    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
 }
 
 /// action 모델 기반 이벤트 디스패치 (openUrl, launchApp 등)

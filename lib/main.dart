@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:webos_service_bridge/webos_service_bridge.dart';
 import 'screens/home_screen.dart';
 import 'theme/tv_theme.dart';
 
@@ -10,6 +11,11 @@ import 'theme/tv_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // webOS luna 서비스 브릿지 등록
+  if (!kIsWeb) {
+    try { LS2ServiceChannel.registerWith(); } catch (_) {}
+  }
 
   // TV 전체화면 + 가로 고정 (native only, not web)
   if (!kIsWeb) {
@@ -31,6 +37,7 @@ class A2UIApp extends StatelessWidget {
     return MaterialApp(
       title: 'a2ui v0.9',
       debugShowCheckedModeBanner: false,
+      color: Colors.transparent,
       theme: TVTheme.build(),
       shortcuts: {
         ...WidgetsApp.defaultShortcuts,
