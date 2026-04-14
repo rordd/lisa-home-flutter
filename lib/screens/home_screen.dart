@@ -90,7 +90,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _setInputCapture('edge');
       });
     }
-    _contentGenerator = LisaWsContentGenerator('ws://10.157.89.194:42618/app');
+    // WS 서버 주소: 환경변수 또는 기본값
+    const wsHost = String.fromEnvironment('WS_HOST', defaultValue: 'localhost');
+    const wsPort = String.fromEnvironment('WS_PORT', defaultValue: '42618');
+    _contentGenerator = LisaWsContentGenerator('ws://$wsHost:$wsPort/app');
 
     final basicCatalog = CoreCatalogItems.asCatalog();
     final tvCatalog = Catalog(
@@ -1177,12 +1180,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // ── 위젯 선반 (저장된 카드 전체 화면 패널) ──
   Widget _buildWidgetShelf() {
     return Stack(children: [
-      // 블러 배경
+      // 투명 배경 (TV 콘텐츠 그대로 보임)
       Positioned.fill(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: Container(color: Colors.black.withOpacity(0.78)),
-        ),
+        child: Container(color: Colors.transparent),
       ),
       // 카드 그리드
       Positioned(
