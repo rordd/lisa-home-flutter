@@ -1,0 +1,18 @@
+1. The following files must not be renamed:
+    template.api.json.in
+    template.manifest.json.in
+    template.perm.json.in
+    template.role.json.in
+    template.service.in
+
+2. Set your service name in "webos/CMakeLists.txt"
+    set(SERVICE_NAME "com.webos.service.example")
+
+3. Translated template file are installed to
+    build/webos/<TARGET>/<RUNTIME_MODE>/sysbus/
+    ex) build/webos/arm/release/sysbus/
+
+Deprecated for service
+- "@SERVICE_NAME@" will be substituted to id value of
+   webos/meta/service.json during build time.
+- Service will be launched though run-flutter-service in devmode
