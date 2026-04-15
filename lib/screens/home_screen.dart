@@ -132,7 +132,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       onTextResponse: (text) {
         Future.delayed(const Duration(milliseconds: 300), () {
           if (!mounted) return;
-          if (text.trim().isNotEmpty) {
+          // 이모지 제거 + JSON/template 태그 필터
+          final cleaned = _stripHtmlTags(text)
+              .replaceAll(RegExp(r'[\u{1F300}-\u{1FAF8}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}]', unicode: true), '')
+              .replaceAll(RegExp(r'<a2ui-[^>]*>.*?</a2ui-[^>]*>', dotAll: true), '')
+              .trim();
+          if (cleaned.startsWith('{') || cleaned.startsWith('[')) return; // raw JSON 무시
+          if (cleaned.isNotEmpty) {
+            final text = cleaned;
             // 카드가 방금 업데이트됐으면 텍스트로 spotlight을 덮지 않음
             if (_cardUpdatedRecently) {
               _cardUpdatedRecently = false;
@@ -147,7 +154,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             if (text.length < 50) return;
             // 카드 없이 텍스트만 온 경우 LISA 코멘트를 단독 spotlight으로 표시
             _renderedCards.removeWhere((c) => c.typeName == '_AiCommentCard');
-            if (_spotlightCard == null || _spotlightSurfaceId == _ghostSurfaceId) {
+            if (_spotlightCard == null) {
+              // spotlight 비어있을 때만 텍스트 카드 표시
+              // ghost 상태에서는 실제 카드가 곧 오므로 텍스트로 교체 안 함
               _spotlightCard = _AiCommentCard(text: text);
               _spotlightSurfaceId = '__text__';
               _spotlightSpan = _GridSpan.m;
@@ -265,18 +274,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ));
       _trimWidgetCards();
     }
+    final hadCard = !isSpecial;
     _spotlightCard = null;
     _spotlightSurfaceId = null;
     _spotlightText = '';
     _spotlightSpan = null;
     _spotlightTypeName = null;
-    // 위젯에서 요청한 카드면 위젯 뷰로 복귀
-    final returnToWidget = _overlayFromWidget;
-    if (_overlayFromWidget) _widgetVisible = true;
     _overlayFromWidget = false;
-    setState(() {});
-    // input region: 위젯 복귀 시 full, 아니면 edge
-    _setInputCapture(returnToWidget || _widgetVisible ? 'full' : 'edge');
+    // 카드 저장됐으면 위젯 선반 열기, 아니면 edge
+    if (hadCard && _widgetCards.isNotEmpty) {
+      _widgetVisible = true;
+      _inputVisible = false;
+      setState(() {});
+      _setInputCapture('full');
+    } else {
+      _widgetVisible = false;
+      setState(() {});
+      _setInputCapture('edge');
+    }
   }
 
   @override
@@ -699,7 +714,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: Stack(children: [
           // ── Spotlight 레이어 (새 카드 전면 가운데) ──
           // 바깥 클릭 시 spotlight 해제 (카드를 위젯 선반으로 내림)
-          if (_spotlightCard != null)
+          if (_spotlightCard != null && !_widgetVisible)
             Positioned.fill(
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
@@ -1009,14 +1024,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildSpotlightLayer() {
     final isGhost = _spotlightSurfaceId == _ghostSurfaceId;
     return Stack(children: [
-      // 반투명 블러 배경 — ghost(로딩) 중에는 투명 유지
-      if (!isGhost)
-        Positioned.fill(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Container(color: Colors.black.withOpacity(0.55)),
-          ),
-        ),
       LayoutBuilder(builder: (context, constraints) {
       final screenW = constraints.maxWidth;
       final screenH = constraints.maxHeight;
@@ -1191,7 +1198,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return Stack(children: [
       // 빈 상태: 반투명 배경 / 카드 있으면: 투명
       Positioned.fill(
-        child: Container(color: isEmpty ? Colors.black.withOpacity(0.4) : Colors.transparent),
+        child: Container(color: Colors.transparent),
       ),
       // 카드 그리드 or 빈 상태
       Positioned(
@@ -1326,17 +1333,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildBottomBar() {
     return ClipRRect(
       borderRadius: BorderRadius.circular(TV.radiusLg),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          decoration: BoxDecoration(
-            color: const Color(0xF0141416),
-            borderRadius: BorderRadius.circular(TV.radiusLg),
-            border: Border.all(color: Colors.white.withOpacity(0.08)),
-          ),
-          child: _buildInputRow(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF141416),
+          borderRadius: BorderRadius.circular(TV.radiusLg),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
         ),
+        child: _buildInputRow(),
       ),
     );
   }
@@ -1696,14 +1700,6 @@ class _GhostCardState extends State<_GhostCard> {
             Text('${_seconds}s',
               style: const TextStyle(fontSize: 22, color: TV.accent, fontWeight: FontWeight.w500)),
             const Spacer(),
-            Container(
-              width: 28, height: 28,
-              decoration: BoxDecoration(
-                color: TV.accent.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.smart_toy_rounded, size: 14, color: TV.accent),
-            ),
           ]),
           const SizedBox(height: 24),
           // Shimmer bars
