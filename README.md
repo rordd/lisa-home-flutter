@@ -1,156 +1,127 @@
-# a2ui TV -- AI-Powered TV Overlay
+# a2ui TV — AI-Powered TV Interface
 
-ZeroClaw AI 에이전트가 UI를 동적으로 생성하는 webOS Flutter 오버레이 앱.
-TV 시청 중 엣지 핸들을 통해 AI 카드(날씨, 뉴스, 영화, 유튜브 등)를 표시하고,
-카드 클릭 시 유튜브/브라우저 등 TV 앱을 직접 실행합니다.
+GPT 5.4가 UI를 동적으로 생성하는 Flutter TV 앱입니다.
 
-## 동작 방식
+## 아키텍처
 
 ```
-TV Screen (Live TV / YouTube / etc.)
-+----------------------------------------------+------+
-|                                              | Edge |
-|          Background App                      |handle|
-|          (receives remote input)             |16x120|
-+----------------------------------------------+------+
-
-          Edge tap -> Widget Shelf opens
-
-+----------------------------------------------+------+
-|  +------+  +------+  +------+                |Mic  X|
-|  | Card |  | Card |  | Card |                |      |
-|  +------+  +------+  +------+                |      |
-|  +----------+  +------+                      |      |
-|  |  Wide    |  | Card |                      |      |
-|  +----------+  +------+                      |      |
-+----------------------------------------------+------+
-       |                              |
-       v                              v
-+-----------+                 +----------------+
-| Flutter   | <-- WebSocket --| ZeroClaw v0.6+ |
-| (a2ui)    |    /app         | (Rust agent)   |
-+-----------+                 +----------------+
+┌─────────────────────────────────────────────────────────┐
+│                     TV Screen                           │
+│  ┌──────────────────────────┐  ┌─────────────────────┐  │
+│  │                          │  │  Chat Overlay        │  │
+│  │   AI-Generated Cards     │  │  (슬라이드 인/아웃)    │  │
+│  │   ┌────┐ ┌────┐ ┌────┐  │  │                     │  │
+│  │   │카드│ │카드│ │카드│  │  │  필요할 때만 등장     │  │
+│  │   └────┘ └────┘ └────┘  │  │  → 리모컨 메뉴 버튼  │  │
+│  │   ┌─────────┐ ┌────┐   │  │  → 'm' 키           │  │
+│  │   │ 와이드  │ │카드│   │  │  → AI가 필요시 자동   │  │
+│  │   └─────────┘ └────┘   │  │                     │  │
+│  │                          │  └─────────────────────┘  │
+│  └──────────────────────────┘           🎤              │
+│                                    Voice Button          │
+└─────────────────────────────────────────────────────────┘
+         │                              │
+         ▼                              ▼
+    ┌─────────┐                  ┌──────────────┐
+    │ Provider │ ◄──────────────►│  GPT 5.4 API │
+    │  State   │   JSON으로      │  (a2ui 엔진)  │
+    └─────────┘   UI 구조 반환   └──────────────┘
 ```
 
-| 상태 | 화면 | 입력 |
-|------|------|------|
-| Edge | 우측 16x120px 핸들만 표시 | 뒤 앱이 리모컨 입력 받음 (needFocus: false) |
-| Widget Shelf | 저장된 AI 카드 그리드 | 이 앱이 입력 받음 (needFocus: true) |
-| Spotlight | 새 AI 카드 전면 표시 | 이 앱이 입력 받음 |
+## 핵심 컨셉: a2ui (AI to UI)
 
-## 빌드
+1. **사용자 입력** → 음성 또는 채팅
+2. **GPT 5.4** → JSON 형태로 UI 카드 구조 반환
+3. **Flutter** → JSON을 파싱하여 동적으로 UI 렌더링
 
-### 사전 준비
+## TV 최적화 포인트
 
-- flutter-webos CLI (webOS Flutter SDK)
-- Starfish SDK (ARM 크로스컴파일 툴체인)
-- ZeroClaw 서버 (WebSocket 백엔드)
+| 항목 | 적용 내용 |
+|------|-----------|
+| **글자 크기** | 최소 18sp, 본문 22sp, 제목 24-52sp |
+| **포커스** | D-pad 기반 포커스 네비게이션 + 글로우 효과 |
+| **카드 확대** | 포커스 시 1.04배 스케일 업 |
+| **음성** | STT(음성→텍스트) + TTS(텍스트→음성) |
+| **채팅** | 평소 숨김, 필요할 때만 우측 슬라이드 |
+| **화면** | 전체화면 + 가로 모드 고정 |
+| **리모컨** | 방향키/선택/메뉴 버튼 매핑 |
 
-### webOS IPK 빌드
+## 셋업
 
+### 1. 사전 준비
 ```bash
-source ~/starfish-sdk-x86_64/environment-setup-ca9v1-webosmllib32-linux-gnueabi
+# Flutter 3.16+ 필요
+flutter --version
 
-flutter-webos build webos --ipk --release --no-tree-shake-icons
-# 결과: build/webos/arm/release/ipk/dev.lge.tv.a2ui.ipk
+# Android TV 또는 Google TV 에뮬레이터 설정
+# Android Studio → AVD Manager → TV 프로필 선택
 ```
 
-`--no-tree-shake-icons` 필수 (json_schema_builder 때문에 IconTreeShaker 실패).
-
-### WS 서버 주소 변경
-
-`lib/screens/home_screen.dart`에서 직접 수정:
+### 2. API 키 설정
+`lib/services/gpt_service.dart` 에서:
 ```dart
-_contentGenerator = LisaWsContentGenerator('ws://SERVER_IP:42618/app');
+static const String _apiKey = 'YOUR_OPENAI_API_KEY';  // ← 여기에 입력
 ```
 
-## TV 설치
+> ⚠️ **보안**: 프로덕션에서는 반드시 백엔드 프록시 서버를 통해 API 키를 관리하세요.
 
-### 1. 개발자 모드 설정 (재부팅마다 필요)
-
+### 3. 실행
 ```bash
-ssh -p 2181 root@TV_IP
+cd tv_a2ui
+flutter pub get
+flutter run -d <TV_EMULATOR_ID>
 
-touch /var/luna/preferences/devmode_enabled
-touch /var/luna/preferences/debug_system_apps
-touch /var/luna/preferences/debug_system_services
-
-mkdir -p /var/luna-service2-dev/{roles.d,manifests.d,client-permissions.d}
-cat > /var/luna-service2-dev/devmode_certificate.json << 'EOF'
-{"devmodeGroups":["public","default.permission","default.permission.platform","application.launcher","application.query","surfacemanager.query","settings.operation","settings.query","media.operation","database.operation","activity.operation","preload.operation"]}
-EOF
+# 또는 모든 디바이스 확인
+flutter devices
 ```
 
-### 2. 클린 설치 (순서 중요!)
-
+### 4. 빌드
 ```bash
-scp -P 2181 dev.lge.tv.a2ui.ipk root@TV_IP:/tmp/
+# Android TV APK
+flutter build apk --release
 
-# cert -> scan -> 삭제 -> scan -> 설치 -> scan -> launch 순서 엄수
-ls-control scan-volatile-dirs; sleep 2
-killall luna-send
-rm -rf /var/luna-service2-dev/roles.d/dev.lge.tv.a2ui*
-rm -rf /var/luna-service2-dev/manifests.d/dev.lge.tv.a2ui*
-rm -rf /var/luna-service2-dev/client-permissions.d/dev.lge.tv.a2ui*
-rm -rf /media/developer/apps/usr/palm/applications/dev.lge.tv.a2ui
-ls-control scan-volatile-dirs; sleep 1
-
-luna-send -i -f luna://com.webos.appInstallService/dev/install \
-  '{"id":"dev.lge.tv.a2ui","ipkUrl":"/tmp/dev.lge.tv.a2ui.ipk","subscribe":true}'
-# "state": "installed" 확인
-
-ls-control scan-volatile-dirs; sleep 2
-luna-send -n 1 -f luna://com.webos.applicationManager/launch '{"id":"dev.lge.tv.a2ui"}'
+# Android TV App Bundle
+flutter build appbundle --release
 ```
 
-순서가 틀리면 `LS::Error: Invalid permissions` 크래시 발생.
-
-### 3. ZeroClaw 서버 실행
-
-```bash
-cd /path/to/lisa
-source ~/.zeroclaw/.env
-./target/release/zeroclaw daemon
-```
-
-daemon 모드 필수. `gateway start`만으로는 Lisa 채널이 동작하지 않음.
-
-## webOS Window Type 참고
-
-| 타입 | dev 앱 | 설명 |
-|------|--------|------|
-| card | O | 일반 전체화면 (뒤 앱 멈춤) |
-| **floating** | **O** | **오버레이 (뒤 앱 계속 동작)** |
-| floatingui | X | luna 시스템 권한 필요 |
-| overlay | X | luna 시스템 권한 필요 |
-
-dev 앱에서 오버레이가 필요하면 `floating` 타입을 사용.
-`needFocus`를 동적으로 전환하여 뒤 앱과 입력을 공유.
-
-## 리모컨 조작
+## 리모컨 조작법
 
 | 키 | 동작 |
 |----|------|
-| RED (F1) | 위젯 패널 열기/닫기 |
-| Back / ESC | 패널/spotlight 닫기, edge 전환 |
-| 마우스 우클릭 | Back과 동일 |
-| Edge 핸들 탭 | 위젯 패널 열기 |
+| **방향키** | 카드 간 포커스 이동 |
+| **선택(OK)** | 카드 선택 / 버튼 클릭 |
+| **메뉴** or **M** | 채팅창 열기/닫기 |
+| **마이크 버튼** | 음성 입력 시작 |
 
 ## 파일 구조
 
 ```
 lib/
-  main.dart                          # 진입점 + LS2ServiceChannel 등록
-  screens/
-    home_screen.dart                 # 메인 (edge, widget shelf, spotlight)
-  catalog/
-    tv_catalog.dart                  # A2UI 카드 카탈로그 + openUrl (luna API)
-  services/
-    lisa_ws_content_generator.dart   # ZeroClaw WebSocket 통신
-  theme/
-    tv_theme.dart                    # TV 다크 테마
-
-webos/
-  meta/
-    appinfo.json                     # webOS 앱 설정 (floating, transparent)
+├── main.dart                  # 앱 진입점
+├── theme/
+│   └── tv_theme.dart          # TV 전용 테마 (큰 글자, 포커스 등)
+├── models/
+│   └── models.dart            # 데이터 모델 (카드, 메시지, 상태)
+├── services/
+│   ├── gpt_service.dart       # GPT 5.4 API 통신 + JSON 파싱
+│   └── app_provider.dart      # 상태 관리 (Provider)
+├── screens/
+│   └── home_screen.dart       # 메인 홈 화면
+└── widgets/
+    ├── tv_card.dart           # 포커스 가능한 TV 카드
+    ├── chat_overlay.dart      # 슬라이드 인 채팅 패널
+    └── voice_button.dart      # 음성 입력 버튼
 ```
+
+## 커스터마이징
+
+### 시스템 프롬프트 수정
+`gpt_service.dart`의 `_systemPrompt`를 수정하여 AI가 생성하는 UI 카드의 종류와 레이아웃을 변경할 수 있습니다.
+
+### 카드 타입 추가
+1. `models.dart`의 `CardType` enum에 새 타입 추가
+2. `tv_card.dart`의 `_accentColor`와 `_iconMap`에 매핑 추가
+3. 시스템 프롬프트에 새 타입 설명 추가
+
+### 테마 변경
+`tv_theme.dart`의 색상 상수와 텍스트 스타일을 수정하세요.

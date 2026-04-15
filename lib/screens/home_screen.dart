@@ -90,7 +90,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _setInputCapture('edge');
       });
     }
-    _contentGenerator = LisaWsContentGenerator('ws://10.157.89.194:42618/app');
+    // WS 서버 주소: 환경변수 또는 기본값
+    const wsHost = String.fromEnvironment('WS_HOST', defaultValue: 'localhost');
+    const wsPort = String.fromEnvironment('WS_PORT', defaultValue: '42618');
+    _contentGenerator = LisaWsContentGenerator('ws://$wsHost:$wsPort/app');
 
     final basicCatalog = CoreCatalogItems.asCatalog();
     final tvCatalog = Catalog(
