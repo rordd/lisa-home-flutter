@@ -90,10 +90,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _setInputCapture('edge');
       });
     }
-    // WS 서버 주소: 환경변수 또는 기본값
-    const wsHost = String.fromEnvironment('WS_HOST', defaultValue: 'localhost');
-    const wsPort = String.fromEnvironment('WS_PORT', defaultValue: '42618');
-    _contentGenerator = LisaWsContentGenerator('ws://$wsHost:$wsPort/app');
+    _contentGenerator = LisaWsContentGenerator('ws://10.157.89.194:42618/app');
 
     final basicCatalog = CoreCatalogItems.asCatalog();
     final tvCatalog = Catalog(
@@ -450,6 +447,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ));
         }
         _collapseToEdge();
+      case 'launchCategory':
+        final category = event.context['category'] as String?;
+        print('[ACTION] $typeName launchCategory: $category');
+        if (category != null && !kIsWeb) {
+          WebOSServiceBridge.callOneReply(WebOSServiceData(
+            'luna://com.webos.applicationManager/launchDefaultApp',
+            payload: {'category': category},
+          ));
+          _collapseToEdge();
+        }
       default:
         print('[ACTION] $typeName unknown: ${event.name} ${event.context}');
     }
@@ -780,7 +787,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             decoration: BoxDecoration(
               color: count > 0
                   ? TV.accent.withOpacity(0.55)
-                  : Colors.white.withOpacity(0.15),
+                  : Colors.white.withOpacity(0.35),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(8),
                 bottomLeft: Radius.circular(8),
@@ -809,13 +816,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // ── 카드 레이아웃 — 4컬럼 × 3로우 그리드 (페이지네이션) ──
   Widget _buildCards({List<_RenderedCard>? cards}) {
     final cardList = cards ?? _renderedCards;
+    final isWidgetMode = cards == _widgetCards;
     return LayoutBuilder(builder: (context, constraints) {
       _availableHeight = constraints.maxHeight;
       final totalW = constraints.maxWidth;
       final totalH = constraints.maxHeight;
       const gap = 16.0;
-      const cols = 4;
-      const rows = 3;
+      final cols = isWidgetMode ? 3 : 4;
+      final rows = isWidgetMode ? 2 : 3;
       print('[GRID] constraints: ${totalW}x$totalH, cards: ${cardList.length}');
       final cellW = (totalW - gap * (cols - 1)) / cols;
       final cellH = (totalH - gap * (rows - 1)) / rows;
@@ -1179,20 +1187,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   // ── 위젯 선반 (저장된 카드 전체 화면 패널) ──
   Widget _buildWidgetShelf() {
+    final isEmpty = _widgetCards.isEmpty;
     return Stack(children: [
-      // 투명 배경 (TV 콘텐츠 그대로 보임)
+      // 빈 상태: 반투명 배경 / 카드 있으면: 투명
       Positioned.fill(
-        child: Container(color: Colors.transparent),
+        child: Container(color: isEmpty ? Colors.black.withOpacity(0.4) : Colors.transparent),
       ),
-      // 카드 그리드
+      // 카드 그리드 or 빈 상태
       Positioned(
         left: 48, top: 72, right: 48, bottom: 100,
-        child: _widgetCards.isEmpty
+        child: isEmpty
             ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.widgets_outlined, size: 56, color: Colors.white.withOpacity(0.18)),
-                const SizedBox(height: 16),
+                Icon(Icons.widgets_outlined, size: 80, color: Colors.white.withOpacity(0.25)),
+                const SizedBox(height: 20),
                 Text('저장된 카드 없음',
-                    style: TextStyle(fontSize: 22, color: Colors.white.withOpacity(0.3))),
+                    style: TextStyle(fontSize: 28, color: Colors.white.withOpacity(0.4))),
+                const SizedBox(height: 32),
+                // 빈 상태에서 마이크 버튼 크게
+                GestureDetector(
+                  onTap: () => setState(() {
+                    _inputVisible = !_inputVisible;
+                    if (_inputVisible) Future.delayed(100.ms, () => _inputFocus.requestFocus());
+                  }),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                    decoration: BoxDecoration(
+                      color: TV.accent.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: TV.accent.withOpacity(0.5)),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.mic_rounded, size: 28, color: TV.accent),
+                      const SizedBox(width: 10),
+                      Text('대화 시작', style: TextStyle(fontSize: 24, color: TV.accent, fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                ),
               ]))
             : _buildCards(cards: _widgetCards),
       ),
@@ -1202,36 +1232,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           left: 48, right: 48, bottom: 24,
           child: _buildBottomBar(),
         ),
-      // 우상단: 마이크 + 닫기
+      // 우상단: 마이크 + 닫기 (카드 있을 때만 표시 — 빈 상태는 가운데 버튼으로 대체)
       Positioned(
         top: 20, right: 48,
         child: Row(children: [
-          GestureDetector(
-            onTap: () => setState(() {
-              _inputVisible = !_inputVisible;
-              if (_inputVisible) Future.delayed(100.ms, () => _inputFocus.requestFocus());
-            }),
-            child: Container(
-              width: 44, height: 44,
-              decoration: BoxDecoration(
-                color: _inputVisible ? TV.accent.withOpacity(0.2) : Colors.white.withOpacity(0.08),
-                shape: BoxShape.circle,
-                border: Border.all(
-                    color: _inputVisible ? TV.accent.withOpacity(0.4) : Colors.white.withOpacity(0.1))),
-              child: Icon(Icons.mic_rounded, size: 22,
-                  color: _inputVisible ? TV.accent : const Color(0xFFAAAAAA)),
+          if (!isEmpty)
+            GestureDetector(
+              onTap: () => setState(() {
+                _inputVisible = !_inputVisible;
+                if (_inputVisible) Future.delayed(100.ms, () => _inputFocus.requestFocus());
+              }),
+              child: Container(
+                width: 52, height: 52,
+                decoration: BoxDecoration(
+                  color: _inputVisible ? TV.accent.withOpacity(0.25) : Colors.white.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: _inputVisible ? TV.accent.withOpacity(0.5) : Colors.white.withOpacity(0.2))),
+                child: Icon(Icons.mic_rounded, size: 26,
+                    color: _inputVisible ? TV.accent : Colors.white),
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           GestureDetector(
             onTap: _toggleWidgetPanel,
             child: Container(
-              width: 44, height: 44,
+              width: 52, height: 52,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.08),
+                color: Colors.white.withOpacity(0.12),
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white.withOpacity(0.1))),
-              child: const Icon(Icons.close_rounded, size: 22, color: Colors.white),
+                border: Border.all(color: Colors.white.withOpacity(0.2))),
+              child: const Icon(Icons.close_rounded, size: 26, color: Colors.white),
             ),
           ),
         ]),
@@ -1341,6 +1372,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: TextField(
           controller: _inputController,
           focusNode: _inputFocus,
+          autocorrect: false,
+          enableSuggestions: false,
           style: const TextStyle(color: Colors.white, fontSize: 22),
           decoration: const InputDecoration(
             hintText: '무엇이든 말씀하세요...',
@@ -1457,6 +1490,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       Expanded(child: Container(
                         decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(12)),
                         child: TextField(
+                          autocorrect: false,
+                          enableSuggestions: false,
                           style: const TextStyle(color: Colors.white, fontSize: 22),
                           decoration: const InputDecoration(
                             hintText: '입력...', hintStyle: TextStyle(color: Color(0xFF666666), fontSize: 22),
