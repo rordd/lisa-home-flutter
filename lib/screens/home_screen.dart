@@ -17,6 +17,38 @@ String _stripHtmlTags(String text) {
   return text.replaceAll(RegExp(r'<[^>]*>'), '').trim();
 }
 
+/// 간단한 마크다운 렌더링: **bold**, *italic*, - 리스트
+Widget _buildMarkdownText(String raw) {
+  final text = _stripHtmlTags(raw)
+      .replaceAll(RegExp(r'[\u{1F300}-\u{1FAF8}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}]', unicode: true), '')
+      .trim();
+  final spans = <InlineSpan>[];
+  final pattern = RegExp(r'\*\*(.+?)\*\*|\*(.+?)\*');
+  int lastEnd = 0;
+  for (final match in pattern.allMatches(text)) {
+    if (match.start > lastEnd) {
+      spans.add(TextSpan(text: text.substring(lastEnd, match.start)));
+    }
+    if (match.group(1) != null) {
+      // **bold**
+      spans.add(TextSpan(text: match.group(1), style: const TextStyle(fontWeight: FontWeight.w700)));
+    } else if (match.group(2) != null) {
+      // *italic*
+      spans.add(TextSpan(text: match.group(2), style: const TextStyle(fontStyle: FontStyle.italic)));
+    }
+    lastEnd = match.end;
+  }
+  if (lastEnd < text.length) {
+    spans.add(TextSpan(text: text.substring(lastEnd)));
+  }
+  return RichText(
+    text: TextSpan(
+      style: const TextStyle(fontSize: 24, color: Colors.white, height: 1.6),
+      children: spans,
+    ),
+  );
+}
+
 /// a2ui v0.9 — 하이브리드 UI
 /// 평소: 하단 토스트 바 (음성/텍스트 입력 + 1줄 응답)
 /// 대화: 오버레이 팝업 (show_chat=true)
@@ -308,6 +340,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _inputFocus.dispose();
     _conversation.dispose();
     super.dispose();
+  }
+
+  /// spotlight 카드를 위젯에 저장하고 위젯 선반 표시
+  void _saveSpotlightAndShowWidget() {
+    if (_spotlightCard == null) return;
+    final isSpecial = _spotlightSurfaceId == _ghostSurfaceId ||
+        _spotlightSurfaceId == _errorSurfaceId ||
+        _spotlightSurfaceId == '__text__';
+    if (!isSpecial) {
+      _widgetCards.insert(0, _RenderedCard(
+        surfaceId: _spotlightSurfaceId ?? 'spotlight',
+        typeName: _spotlightTypeName ?? 'Unknown',
+        span: _spotlightSpan ?? _GridSpan.s,
+        widget: _spotlightCard!,
+      ));
+      _trimWidgetCards();
+    }
+    setState(() {
+      _spotlightCard = null;
+      _spotlightSurfaceId = null;
+      _spotlightText = '';
+      _spotlightSpan = null;
+      _spotlightTypeName = null;
+      _overlayFromWidget = false;
+      _widgetVisible = _widgetCards.isNotEmpty;
+      _inputVisible = false;
+    });
+    if (!kIsWeb) _setInputCapture(_widgetVisible ? 'full' : 'edge');
   }
 
   @override
@@ -709,6 +769,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           if (event.buttons == kSecondaryMouseButton) _handleBackAction();
         },
         child: Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: Colors.transparent,
       body: SizedBox.expand(
         child: Stack(children: [
@@ -718,7 +779,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             Positioned.fill(
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
-                onTap: _dismissSpotlight,
+                onTap: () {
+                  // 디버그: 탭 시 spotlight 상태 표시
+                  final sid = _spotlightSurfaceId ?? 'NULL';
+                  final typ = _spotlightTypeName ?? 'NULL';
+                  final isNull = _spotlightCard == null;
+                  _showToast('TAP: sid=$sid type=$typ null=$isNull cards=${_widgetCards.length}');
+                  _saveSpotlightAndShowWidget();
+                },
                 child: _buildSpotlightLayer(),
               ),
             ),
@@ -776,6 +844,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   duration: 300.ms,
                   curve: Curves.easeOutCubic,
                 ),
+
+          // ── 디버그: spotlight 있을 때 위젯 저장 버튼 (독립 레이어) ──
+          if (_spotlightCard != null && !_widgetVisible)
+            Positioned(
+              left: 48, bottom: 48,
+              child: GestureDetector(
+                onTap: () {
+                  _showToast('DIRECT SAVE: sid=${_spotlightSurfaceId}');
+                  _saveSpotlightAndShowWidget();
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  decoration: BoxDecoration(
+                    color: TV.accent,
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: const Text('위젯으로 저장', style: TextStyle(fontSize: 24, color: Colors.black, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ),
+
+          // ── 디버그 오버레이 ──
+          Positioned(
+            left: 10, bottom: 10,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              color: Colors.black.withOpacity(0.7),
+              child: Text(
+                'SC=${_spotlightCard != null} SID=${_spotlightSurfaceId ?? "null"}\n'
+                'WV=$_widgetVisible WC=${_widgetCards.length} GH=${_spotlightSurfaceId == _ghostSurfaceId}',
+                style: const TextStyle(fontSize: 14, color: Colors.yellow, fontFamily: 'monospace'),
+              ),
+            ),
+          ),
 
           // ── 우측 엣지 핸들 (패널 닫힘 시, RED키 또는 탭으로 열기) ──
           if (!_widgetVisible && _spotlightCard == null)
@@ -908,9 +1010,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: Stack(children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(24),
-                child: isNewest
-                    ? Focus(autofocus: true, child: card.widget)
-                    : card.widget,
+                child: KeyedSubtree(
+                  key: ValueKey('${card.surfaceId}_${isWidgetShelf ? "w" : "s"}'),
+                  child: isNewest
+                      ? Focus(autofocus: true, child: card.widget)
+                      : card.widget,
+                ),
               ),
               // 위젯 선반에서만 삭제 버튼
               if (isWidgetShelf)
@@ -1061,13 +1166,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
       );
 
-      // 코멘트 없으면 카드만 가운데
+      // dismiss 버튼 (카드 아래)
+      Widget dismissButton = isGhost ? const SizedBox.shrink() : GestureDetector(
+        onTap: _saveSpotlightAndShowWidget,
+        child: Container(
+          margin: const EdgeInsets.only(top: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white.withOpacity(0.2)),
+          ),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.widgets_rounded, size: 20, color: Colors.white70),
+            SizedBox(width: 8),
+            Text('위젯으로 보내기', style: TextStyle(fontSize: 20, color: Colors.white70)),
+          ]),
+        ),
+      );
+
+      // 코멘트 없으면 카드 + 버튼 가운데
       if (!hasComment) {
         return Center(
-          child: SizedBox(
-            width: cardW, height: cardH,
-            child: spotlightCardWrapped,
-          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            SizedBox(
+              width: cardW, height: cardH,
+              child: spotlightCardWrapped,
+            ),
+            dismissButton,
+          ]),
         )
             .animate()
             .fadeIn(duration: 400.ms, curve: Curves.easeOutCubic)
@@ -1119,25 +1246,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Container(
-                        width: 28, height: 28,
-                        decoration: BoxDecoration(
-                          color: TV.accent.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.smart_toy_rounded, size: 16, color: TV.accent),
-                      ),
-                      const SizedBox(width: 10),
-                      const Text('LISA', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: TV.accent)),
-                    ]),
-                    const SizedBox(height: 16),
                     Expanded(
                       child: SingleChildScrollView(
-                        child: Text(
-                          _stripHtmlTags(_spotlightText),
-                          style: const TextStyle(fontSize: 24, color: Colors.white, height: 1.6),
-                        ),
+                        child: _buildMarkdownText(_spotlightText),
                       ),
                     ),
                   ],
@@ -1194,82 +1305,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   // ── 위젯 선반 (저장된 카드 전체 화면 패널) ──
   Widget _buildWidgetShelf() {
-    final isEmpty = _widgetCards.isEmpty;
     return Stack(children: [
-      // 빈 상태: 반투명 배경 / 카드 있으면: 투명
-      Positioned.fill(
-        child: Container(color: Colors.transparent),
-      ),
-      // 카드 그리드 or 빈 상태
-      Positioned(
-        left: 48, top: 72, right: 48, bottom: 100,
-        child: isEmpty
-            ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.widgets_outlined, size: 80, color: Colors.white.withOpacity(0.25)),
-                const SizedBox(height: 20),
-                Text('저장된 카드 없음',
-                    style: TextStyle(fontSize: 28, color: Colors.white.withOpacity(0.4))),
-                const SizedBox(height: 32),
-                // 빈 상태에서 마이크 버튼 크게
-                GestureDetector(
-                  onTap: () => setState(() {
-                    _inputVisible = !_inputVisible;
-                    if (_inputVisible) Future.delayed(100.ms, () => _inputFocus.requestFocus());
-                  }),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                    decoration: BoxDecoration(
-                      color: TV.accent.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(30),
-                      border: Border.all(color: TV.accent.withOpacity(0.5)),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.mic_rounded, size: 28, color: TV.accent),
-                      const SizedBox(width: 10),
-                      Text('대화 시작', style: TextStyle(fontSize: 24, color: TV.accent, fontWeight: FontWeight.w600)),
-                    ]),
-                  ),
-                ),
-              ]))
-            : _buildCards(cards: _widgetCards),
-      ),
+      Positioned.fill(child: Container(color: Colors.transparent)),
+      // 카드 그리드 (빈 상태면 그냥 비어있음)
+      if (_widgetCards.isNotEmpty)
+        Positioned(
+          left: 48, top: 80, right: 48, bottom: 100,
+          child: _buildCards(cards: _widgetCards),
+        ),
       // 하단 입력 바 (마이크 버튼으로 토글)
       if (_inputVisible)
         Positioned(
           left: 48, right: 48, bottom: 24,
           child: _buildBottomBar(),
         ),
-      // 우상단: 마이크 + 닫기 (카드 있을 때만 표시 — 빈 상태는 가운데 버튼으로 대체)
+      // 우상단: 마이크 + 닫기 — 항상 표시, 크고 불투명
       Positioned(
         top: 20, right: 48,
         child: Row(children: [
-          if (!isEmpty)
-            GestureDetector(
-              onTap: () => setState(() {
-                _inputVisible = !_inputVisible;
-                if (_inputVisible) Future.delayed(100.ms, () => _inputFocus.requestFocus());
-              }),
-              child: Container(
-                width: 52, height: 52,
-                decoration: BoxDecoration(
-                  color: _inputVisible ? TV.accent.withOpacity(0.25) : Colors.white.withOpacity(0.12),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                      color: _inputVisible ? TV.accent.withOpacity(0.5) : Colors.white.withOpacity(0.2))),
-                child: Icon(Icons.mic_rounded, size: 26,
-                    color: _inputVisible ? TV.accent : Colors.white),
+          GestureDetector(
+            onTap: () => setState(() {
+              _inputVisible = !_inputVisible;
+              if (_inputVisible) Future.delayed(100.ms, () => _inputFocus.requestFocus());
+            }),
+            child: Container(
+              width: 64, height: 64,
+              decoration: BoxDecoration(
+                color: _inputVisible ? TV.accent : const Color(0xFF2A2A2E),
+                shape: BoxShape.circle,
               ),
+              child: Icon(Icons.mic_rounded, size: 32,
+                  color: _inputVisible ? Colors.black : Colors.white),
             ),
-          const SizedBox(width: 10),
+          ),
+          const SizedBox(width: 12),
           GestureDetector(
             onTap: _toggleWidgetPanel,
             child: Container(
-              width: 52, height: 52,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.12),
+              width: 64, height: 64,
+              decoration: const BoxDecoration(
+                color: Color(0xFF2A2A2E),
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white.withOpacity(0.2))),
-              child: const Icon(Icons.close_rounded, size: 26, color: Colors.white),
+              ),
+              child: const Icon(Icons.close_rounded, size: 32, color: Colors.white),
             ),
           ),
         ]),
@@ -1627,25 +1705,7 @@ class _AiCommentCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // AI 헤더
-            Row(children: [
-              Container(
-                width: 28, height: 28,
-                decoration: BoxDecoration(
-                  color: TV.accent.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.smart_toy_rounded, size: 16, color: TV.accent),
-              ),
-              const SizedBox(width: 10),
-              const Text('LISA', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: TV.accent)),
-            ]),
-            const SizedBox(height: 12),
-            // 텍스트 (HTML 태그 strip)
-            Text(
-              _stripHtmlTags(text),
-              style: const TextStyle(fontSize: 22, color: Colors.white, height: 1.5),
-            ),
+            _buildMarkdownText(text),
           ],
         ),
       ),
