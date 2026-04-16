@@ -401,8 +401,17 @@ class LisaWsContentGenerator implements ContentGenerator {
         props['children'] = {'explicitList': props['children']};
       }
 
-      // v0.9 variant → GenUI usageHint 매핑
-      if (props.containsKey('variant') && !props.containsKey('usageHint')) {
+      // v0.9 variant: TV 커스텀 카드는 variant 그대로 유지
+      // Basic 카탈로그(Text, Button 등)만 usageHint로 변환
+      // TV 커스텀 카드 목록에 없는 컴포넌트만 rename
+      const _tvCustomCards = {
+        'WeatherCard', 'MediaRailCard', 'PlaceRailCard', 'MapCard',
+        'ArticleListCard', 'ArticleSummaryCard', 'ReviewSummaryCard',
+        'GameCard', 'ListCard', 'InfoCard', 'WebappCard', 'ControlCard',
+        'HomeControlCard', 'DeviceDetailCard', 'DocumentCard',
+        'ComparisonCard', 'RecipeCard', 'ContextCard',
+      };
+      if (props.containsKey('variant') && !_tvCustomCards.contains(component)) {
         props['usageHint'] = props.remove('variant');
       }
 

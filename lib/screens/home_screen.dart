@@ -17,6 +17,38 @@ String _stripHtmlTags(String text) {
   return text.replaceAll(RegExp(r'<[^>]*>'), '').trim();
 }
 
+/// 간단한 마크다운 렌더링: **bold**, *italic*, - 리스트
+Widget _buildMarkdownText(String raw) {
+  final text = _stripHtmlTags(raw)
+      .replaceAll(RegExp(r'[\u{1F300}-\u{1FAF8}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}]', unicode: true), '')
+      .trim();
+  final spans = <InlineSpan>[];
+  final pattern = RegExp(r'\*\*(.+?)\*\*|\*(.+?)\*');
+  int lastEnd = 0;
+  for (final match in pattern.allMatches(text)) {
+    if (match.start > lastEnd) {
+      spans.add(TextSpan(text: text.substring(lastEnd, match.start)));
+    }
+    if (match.group(1) != null) {
+      // **bold**
+      spans.add(TextSpan(text: match.group(1), style: const TextStyle(fontWeight: FontWeight.w700)));
+    } else if (match.group(2) != null) {
+      // *italic*
+      spans.add(TextSpan(text: match.group(2), style: const TextStyle(fontStyle: FontStyle.italic)));
+    }
+    lastEnd = match.end;
+  }
+  if (lastEnd < text.length) {
+    spans.add(TextSpan(text: text.substring(lastEnd)));
+  }
+  return RichText(
+    text: TextSpan(
+      style: const TextStyle(fontSize: 24, color: Colors.white, height: 1.6),
+      children: spans,
+    ),
+  );
+}
+
 /// a2ui v0.9 — 하이브리드 UI
 /// 평소: 하단 토스트 바 (음성/텍스트 입력 + 1줄 응답)
 /// 대화: 오버레이 팝업 (show_chat=true)
@@ -90,10 +122,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _setInputCapture('edge');
       });
     }
-    // WS 서버 주소: 환경변수 또는 기본값
-    const wsHost = String.fromEnvironment('WS_HOST', defaultValue: 'localhost');
-    const wsPort = String.fromEnvironment('WS_PORT', defaultValue: '42618');
-    _contentGenerator = LisaWsContentGenerator('ws://$wsHost:$wsPort/app');
+    _contentGenerator = LisaWsContentGenerator('ws://10.157.89.194:42618/app');
 
     final basicCatalog = CoreCatalogItems.asCatalog();
     final tvCatalog = Catalog(
@@ -135,7 +164,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       onTextResponse: (text) {
         Future.delayed(const Duration(milliseconds: 300), () {
           if (!mounted) return;
-          if (text.trim().isNotEmpty) {
+          // 이모지 제거 + JSON/template 태그 필터
+          final cleaned = _stripHtmlTags(text)
+              .replaceAll(RegExp(r'[\u{1F300}-\u{1FAF8}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}]', unicode: true), '')
+              .replaceAll(RegExp(r'<a2ui-[^>]*>.*?</a2ui-[^>]*>', dotAll: true), '')
+              .trim();
+          if (cleaned.startsWith('{') || cleaned.startsWith('[')) return; // raw JSON 무시
+          if (cleaned.isNotEmpty) {
+            final text = cleaned;
             // 카드가 방금 업데이트됐으면 텍스트로 spotlight을 덮지 않음
             if (_cardUpdatedRecently) {
               _cardUpdatedRecently = false;
@@ -150,7 +186,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             if (text.length < 50) return;
             // 카드 없이 텍스트만 온 경우 LISA 코멘트를 단독 spotlight으로 표시
             _renderedCards.removeWhere((c) => c.typeName == '_AiCommentCard');
-            if (_spotlightCard == null || _spotlightSurfaceId == _ghostSurfaceId) {
+            if (_spotlightCard == null) {
+              // spotlight 비어있을 때만 텍스트 카드 표시
+              // ghost 상태에서는 실제 카드가 곧 오므로 텍스트로 교체 안 함
               _spotlightCard = _AiCommentCard(text: text);
               _spotlightSurfaceId = '__text__';
               _spotlightSpan = _GridSpan.m;
@@ -268,18 +306,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ));
       _trimWidgetCards();
     }
+    final hadCard = !isSpecial;
     _spotlightCard = null;
     _spotlightSurfaceId = null;
     _spotlightText = '';
     _spotlightSpan = null;
     _spotlightTypeName = null;
-    // 위젯에서 요청한 카드면 위젯 뷰로 복귀
-    final returnToWidget = _overlayFromWidget;
-    if (_overlayFromWidget) _widgetVisible = true;
     _overlayFromWidget = false;
-    setState(() {});
-    // input region: 위젯 복귀 시 full, 아니면 edge
-    _setInputCapture(returnToWidget || _widgetVisible ? 'full' : 'edge');
+    // 카드 저장됐으면 위젯 선반 열기, 아니면 edge
+    if (hadCard && _widgetCards.isNotEmpty) {
+      _widgetVisible = true;
+      _inputVisible = false;
+      setState(() {});
+      _setInputCapture('full');
+    } else {
+      _widgetVisible = false;
+      setState(() {});
+      _setInputCapture('edge');
+    }
   }
 
   @override
@@ -296,6 +340,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _inputFocus.dispose();
     _conversation.dispose();
     super.dispose();
+  }
+
+  /// spotlight 카드를 위젯에 저장하고 위젯 선반 표시
+  void _saveSpotlightAndShowWidget() {
+    if (_spotlightCard == null) return;
+    final isSpecial = _spotlightSurfaceId == _ghostSurfaceId ||
+        _spotlightSurfaceId == _errorSurfaceId ||
+        _spotlightSurfaceId == '__text__';
+    if (!isSpecial) {
+      _widgetCards.insert(0, _RenderedCard(
+        surfaceId: _spotlightSurfaceId ?? 'spotlight',
+        typeName: _spotlightTypeName ?? 'Unknown',
+        span: _spotlightSpan ?? _GridSpan.s,
+        widget: _spotlightCard!,
+      ));
+      _trimWidgetCards();
+    }
+    setState(() {
+      _spotlightCard = null;
+      _spotlightSurfaceId = null;
+      _spotlightText = '';
+      _spotlightSpan = null;
+      _spotlightTypeName = null;
+      _overlayFromWidget = false;
+      _widgetVisible = _widgetCards.isNotEmpty;
+      _inputVisible = false;
+    });
+    if (!kIsWeb) _setInputCapture(_widgetVisible ? 'full' : 'edge');
   }
 
   @override
@@ -450,6 +522,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ));
         }
         _collapseToEdge();
+      case 'launchCategory':
+        final category = event.context['category'] as String?;
+        print('[ACTION] $typeName launchCategory: $category');
+        if (category != null && !kIsWeb) {
+          WebOSServiceBridge.callOneReply(WebOSServiceData(
+            'luna://com.webos.applicationManager/launchDefaultApp',
+            payload: {'category': category},
+          ));
+          _collapseToEdge();
+        }
       default:
         print('[ACTION] $typeName unknown: ${event.name} ${event.context}');
     }
@@ -687,16 +769,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           if (event.buttons == kSecondaryMouseButton) _handleBackAction();
         },
         child: Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: Colors.transparent,
       body: SizedBox.expand(
         child: Stack(children: [
           // ── Spotlight 레이어 (새 카드 전면 가운데) ──
           // 바깥 클릭 시 spotlight 해제 (카드를 위젯 선반으로 내림)
-          if (_spotlightCard != null)
+          if (_spotlightCard != null && !_widgetVisible)
             Positioned.fill(
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
-                onTap: _dismissSpotlight,
+                onTap: () {
+                  // 디버그: 탭 시 spotlight 상태 표시
+                  final sid = _spotlightSurfaceId ?? 'NULL';
+                  final typ = _spotlightTypeName ?? 'NULL';
+                  final isNull = _spotlightCard == null;
+                  _showToast('TAP: sid=$sid type=$typ null=$isNull cards=${_widgetCards.length}');
+                  _saveSpotlightAndShowWidget();
+                },
                 child: _buildSpotlightLayer(),
               ),
             ),
@@ -755,6 +845,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   curve: Curves.easeOutCubic,
                 ),
 
+          // ── 디버그: spotlight 있을 때 위젯 저장 버튼 (독립 레이어) ──
+          if (_spotlightCard != null && !_widgetVisible)
+            Positioned(
+              left: 48, bottom: 48,
+              child: GestureDetector(
+                onTap: () {
+                  _showToast('DIRECT SAVE: sid=${_spotlightSurfaceId}');
+                  _saveSpotlightAndShowWidget();
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  decoration: BoxDecoration(
+                    color: TV.accent,
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: const Text('위젯으로 저장', style: TextStyle(fontSize: 24, color: Colors.black, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ),
+
+          // ── 디버그 오버레이 ──
+          Positioned(
+            left: 10, bottom: 10,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              color: Colors.black.withOpacity(0.7),
+              child: Text(
+                'SC=${_spotlightCard != null} SID=${_spotlightSurfaceId ?? "null"}\n'
+                'WV=$_widgetVisible WC=${_widgetCards.length} GH=${_spotlightSurfaceId == _ghostSurfaceId}',
+                style: const TextStyle(fontSize: 14, color: Colors.yellow, fontFamily: 'monospace'),
+              ),
+            ),
+          ),
+
           // ── 우측 엣지 핸들 (패널 닫힘 시, RED키 또는 탭으로 열기) ──
           if (!_widgetVisible && _spotlightCard == null)
             _buildEdgeHandle(),
@@ -780,7 +904,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             decoration: BoxDecoration(
               color: count > 0
                   ? TV.accent.withOpacity(0.55)
-                  : Colors.white.withOpacity(0.15),
+                  : Colors.white.withOpacity(0.35),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(8),
                 bottomLeft: Radius.circular(8),
@@ -809,13 +933,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // ── 카드 레이아웃 — 4컬럼 × 3로우 그리드 (페이지네이션) ──
   Widget _buildCards({List<_RenderedCard>? cards}) {
     final cardList = cards ?? _renderedCards;
+    final isWidgetMode = cards == _widgetCards;
     return LayoutBuilder(builder: (context, constraints) {
       _availableHeight = constraints.maxHeight;
       final totalW = constraints.maxWidth;
       final totalH = constraints.maxHeight;
       const gap = 16.0;
-      const cols = 4;
-      const rows = 3;
+      final cols = isWidgetMode ? 3 : 4;
+      final rows = isWidgetMode ? 2 : 3;
       print('[GRID] constraints: ${totalW}x$totalH, cards: ${cardList.length}');
       final cellW = (totalW - gap * (cols - 1)) / cols;
       final cellH = (totalH - gap * (rows - 1)) / rows;
@@ -885,9 +1010,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: Stack(children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(24),
-                child: isNewest
-                    ? Focus(autofocus: true, child: card.widget)
-                    : card.widget,
+                child: KeyedSubtree(
+                  key: ValueKey('${card.surfaceId}_${isWidgetShelf ? "w" : "s"}'),
+                  child: isNewest
+                      ? Focus(autofocus: true, child: card.widget)
+                      : card.widget,
+                ),
               ),
               // 위젯 선반에서만 삭제 버튼
               if (isWidgetShelf)
@@ -1001,14 +1129,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildSpotlightLayer() {
     final isGhost = _spotlightSurfaceId == _ghostSurfaceId;
     return Stack(children: [
-      // 반투명 블러 배경 — ghost(로딩) 중에는 투명 유지
-      if (!isGhost)
-        Positioned.fill(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Container(color: Colors.black.withOpacity(0.55)),
-          ),
-        ),
       LayoutBuilder(builder: (context, constraints) {
       final screenW = constraints.maxWidth;
       final screenH = constraints.maxHeight;
@@ -1046,13 +1166,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
       );
 
-      // 코멘트 없으면 카드만 가운데
+      // dismiss 버튼 (카드 아래)
+      Widget dismissButton = isGhost ? const SizedBox.shrink() : GestureDetector(
+        onTap: _saveSpotlightAndShowWidget,
+        child: Container(
+          margin: const EdgeInsets.only(top: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white.withOpacity(0.2)),
+          ),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.widgets_rounded, size: 20, color: Colors.white70),
+            SizedBox(width: 8),
+            Text('위젯으로 보내기', style: TextStyle(fontSize: 20, color: Colors.white70)),
+          ]),
+        ),
+      );
+
+      // 코멘트 없으면 카드 + 버튼 가운데
       if (!hasComment) {
         return Center(
-          child: SizedBox(
-            width: cardW, height: cardH,
-            child: spotlightCardWrapped,
-          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            SizedBox(
+              width: cardW, height: cardH,
+              child: spotlightCardWrapped,
+            ),
+            dismissButton,
+          ]),
         )
             .animate()
             .fadeIn(duration: 400.ms, curve: Curves.easeOutCubic)
@@ -1104,25 +1246,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Container(
-                        width: 28, height: 28,
-                        decoration: BoxDecoration(
-                          color: TV.accent.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.smart_toy_rounded, size: 16, color: TV.accent),
-                      ),
-                      const SizedBox(width: 10),
-                      const Text('LISA', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: TV.accent)),
-                    ]),
-                    const SizedBox(height: 16),
                     Expanded(
                       child: SingleChildScrollView(
-                        child: Text(
-                          _stripHtmlTags(_spotlightText),
-                          style: const TextStyle(fontSize: 24, color: Colors.white, height: 1.6),
-                        ),
+                        child: _buildMarkdownText(_spotlightText),
                       ),
                     ),
                   ],
@@ -1180,29 +1306,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // ── 위젯 선반 (저장된 카드 전체 화면 패널) ──
   Widget _buildWidgetShelf() {
     return Stack(children: [
-      // 투명 배경 (TV 콘텐츠 그대로 보임)
-      Positioned.fill(
-        child: Container(color: Colors.transparent),
-      ),
-      // 카드 그리드
-      Positioned(
-        left: 48, top: 72, right: 48, bottom: 100,
-        child: _widgetCards.isEmpty
-            ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.widgets_outlined, size: 56, color: Colors.white.withOpacity(0.18)),
-                const SizedBox(height: 16),
-                Text('저장된 카드 없음',
-                    style: TextStyle(fontSize: 22, color: Colors.white.withOpacity(0.3))),
-              ]))
-            : _buildCards(cards: _widgetCards),
-      ),
+      Positioned.fill(child: Container(color: Colors.transparent)),
+      // 카드 그리드 (빈 상태면 그냥 비어있음)
+      if (_widgetCards.isNotEmpty)
+        Positioned(
+          left: 48, top: 80, right: 48, bottom: 100,
+          child: _buildCards(cards: _widgetCards),
+        ),
       // 하단 입력 바 (마이크 버튼으로 토글)
       if (_inputVisible)
         Positioned(
           left: 48, right: 48, bottom: 24,
           child: _buildBottomBar(),
         ),
-      // 우상단: 마이크 + 닫기
+      // 우상단: 마이크 + 닫기 — 항상 표시, 크고 불투명
       Positioned(
         top: 20, right: 48,
         child: Row(children: [
@@ -1212,26 +1329,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               if (_inputVisible) Future.delayed(100.ms, () => _inputFocus.requestFocus());
             }),
             child: Container(
-              width: 44, height: 44,
+              width: 64, height: 64,
               decoration: BoxDecoration(
-                color: _inputVisible ? TV.accent.withOpacity(0.2) : Colors.white.withOpacity(0.08),
+                color: _inputVisible ? TV.accent : const Color(0xFF2A2A2E),
                 shape: BoxShape.circle,
-                border: Border.all(
-                    color: _inputVisible ? TV.accent.withOpacity(0.4) : Colors.white.withOpacity(0.1))),
-              child: Icon(Icons.mic_rounded, size: 22,
-                  color: _inputVisible ? TV.accent : const Color(0xFFAAAAAA)),
+              ),
+              child: Icon(Icons.mic_rounded, size: 32,
+                  color: _inputVisible ? Colors.black : Colors.white),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 12),
           GestureDetector(
             onTap: _toggleWidgetPanel,
             child: Container(
-              width: 44, height: 44,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.08),
+              width: 64, height: 64,
+              decoration: const BoxDecoration(
+                color: Color(0xFF2A2A2E),
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white.withOpacity(0.1))),
-              child: const Icon(Icons.close_rounded, size: 22, color: Colors.white),
+              ),
+              child: const Icon(Icons.close_rounded, size: 32, color: Colors.white),
             ),
           ),
         ]),
@@ -1295,17 +1411,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildBottomBar() {
     return ClipRRect(
       borderRadius: BorderRadius.circular(TV.radiusLg),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          decoration: BoxDecoration(
-            color: const Color(0xF0141416),
-            borderRadius: BorderRadius.circular(TV.radiusLg),
-            border: Border.all(color: Colors.white.withOpacity(0.08)),
-          ),
-          child: _buildInputRow(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF141416),
+          borderRadius: BorderRadius.circular(TV.radiusLg),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
         ),
+        child: _buildInputRow(),
       ),
     );
   }
@@ -1341,6 +1454,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: TextField(
           controller: _inputController,
           focusNode: _inputFocus,
+          autocorrect: false,
+          enableSuggestions: false,
           style: const TextStyle(color: Colors.white, fontSize: 22),
           decoration: const InputDecoration(
             hintText: '무엇이든 말씀하세요...',
@@ -1457,6 +1572,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       Expanded(child: Container(
                         decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(12)),
                         child: TextField(
+                          autocorrect: false,
+                          enableSuggestions: false,
                           style: const TextStyle(color: Colors.white, fontSize: 22),
                           decoration: const InputDecoration(
                             hintText: '입력...', hintStyle: TextStyle(color: Color(0xFF666666), fontSize: 22),
@@ -1588,25 +1705,7 @@ class _AiCommentCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // AI 헤더
-            Row(children: [
-              Container(
-                width: 28, height: 28,
-                decoration: BoxDecoration(
-                  color: TV.accent.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.smart_toy_rounded, size: 16, color: TV.accent),
-              ),
-              const SizedBox(width: 10),
-              const Text('LISA', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: TV.accent)),
-            ]),
-            const SizedBox(height: 12),
-            // 텍스트 (HTML 태그 strip)
-            Text(
-              _stripHtmlTags(text),
-              style: const TextStyle(fontSize: 22, color: Colors.white, height: 1.5),
-            ),
+            _buildMarkdownText(text),
           ],
         ),
       ),
@@ -1661,14 +1760,6 @@ class _GhostCardState extends State<_GhostCard> {
             Text('${_seconds}s',
               style: const TextStyle(fontSize: 22, color: TV.accent, fontWeight: FontWeight.w500)),
             const Spacer(),
-            Container(
-              width: 28, height: 28,
-              decoration: BoxDecoration(
-                color: TV.accent.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.smart_toy_rounded, size: 14, color: TV.accent),
-            ),
           ]),
           const SizedBox(height: 24),
           // Shimmer bars

@@ -79,15 +79,32 @@ String? _extractYoutubeId(String url) {
   return null;
 }
 
+// URL 패턴 → webOS 네이티브 앱 ID 매핑
+const _urlAppMap = <String, String>{
+  'youtube.com': 'youtube.leanback.v4',
+  'youtu.be': 'youtube.leanback.v4',
+  'netflix.com': 'netflix',
+  'disneyplus.com': 'com.disney.disneyplus-prod',
+  'coupangplay.com': 'coupangplay',
+  'wavve.com': 'pooq',
+  'tving.com': 'cj.eandm',
+  'amazon.com/video': 'amazon',
+  'primevideo.com': 'amazon',
+};
+
 void openUrl(String url) {
   print('[CATALOG] Opening URL: $url');
   if (!kIsWeb) {
-    // webOS: luna API로 브라우저 또는 유튜브 앱 실행
-    final isYoutube = url.contains('youtube.com') || url.contains('youtu.be');
-    if (isYoutube) {
+    // URL 패턴으로 네이티브 앱 감지
+    String? appId;
+    for (final entry in _urlAppMap.entries) {
+      if (url.contains(entry.key)) { appId = entry.value; break; }
+    }
+    if (appId != null) {
+      final param = appId == 'youtube.leanback.v4' ? 'contentTarget' : 'target';
       WebOSServiceBridge.callOneReply(WebOSServiceData(
         'luna://com.palm.applicationManager/launch',
-        payload: {'id': 'youtube.leanback.v4', 'params': {'contentTarget': url}},
+        payload: {'id': appId, 'params': {param: url}},
       ));
     } else {
       WebOSServiceBridge.callOneReply(WebOSServiceData(
@@ -132,7 +149,7 @@ void _dispatchAction(dynamic action, String? fallbackUrl,
 /// TV 카드 데코레이션 — 반투명 다크 글래스, 미세한 보더, 부드러운 그림자
 /// 그리드에서 뒤 배경이 비치도록 반투명. Spotlight은 별도 불투명 래퍼 사용.
 BoxDecoration tvCardBox({bool focused = false}) => BoxDecoration(
-  color: focused ? const Color(0xDD1E1E22) : const Color(0xBB141416),
+  color: focused ? const Color(0xFF1E1E22) : const Color(0xFF141416),
   borderRadius: BorderRadius.circular(TV.radiusMd),
   border: Border.all(
     color: focused
