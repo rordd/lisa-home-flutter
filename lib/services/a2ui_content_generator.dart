@@ -251,8 +251,13 @@ class A2uiContentGenerator implements ContentGenerator {
           props['action'] = {
             'name': fc['call'] as String? ?? 'unknown',
             if (fc['args'] is Map)
-              'context': (fc['args'] as Map).entries.map((e) =>
-                  {'key': e.key, 'value': e.value}).toList(),
+              'context': (fc['args'] as Map).entries.map((e) => {
+                'key': e.key,
+                'value': e.value is String ? {'literalString': e.value}
+                       : e.value is num    ? {'literalNumber': e.value}
+                       : e.value is bool   ? {'literalBoolean': e.value}
+                       : {'literalString': jsonEncode(e.value)},
+              }).toList(),
           };
         } else if (!action.containsKey('name')) {
           props['action'] = {'name': 'action'};

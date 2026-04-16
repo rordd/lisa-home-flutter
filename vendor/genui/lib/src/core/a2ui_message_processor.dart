@@ -87,7 +87,11 @@ abstract interface class GenUiHost {
 class A2uiMessageProcessor implements GenUiHost {
   /// Creates a new [A2uiMessageProcessor] with a list of supported widget
   /// catalogs.
-  A2uiMessageProcessor({required this.catalogs});
+  A2uiMessageProcessor({required this.catalogs, this.onClientAction});
+
+  /// Client-side action handler for functionCall events (launchApp, openUrl, etc.).
+  /// When set, matching events are routed here instead of being sent to the server.
+  final void Function(UserActionEvent event)? onClientAction;
 
   @override
   final Iterable<Catalog> catalogs;
@@ -115,10 +119,16 @@ class A2uiMessageProcessor implements GenUiHost {
   /// A stream of user input messages generated from UI interactions.
   Stream<UserUiInteractionMessage> get onSubmit => _onSubmit.stream;
 
+  static const _clientActions = {'launchApp', 'openUrl'};
+
   @override
   void handleUiEvent(UiEvent event) {
     if (event is! UserActionEvent) {
-      // Or handle other event types if necessary
+      return;
+    }
+
+    if (onClientAction != null && _clientActions.contains(event.name)) {
+      onClientAction!(event);
       return;
     }
 

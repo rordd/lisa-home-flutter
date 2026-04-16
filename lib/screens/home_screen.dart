@@ -90,17 +90,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _setInputCapture('edge');
       });
     }
-    // WS 서버 주소: 환경변수 또는 기본값
-    const wsHost = String.fromEnvironment('WS_HOST', defaultValue: 'localhost');
-    const wsPort = String.fromEnvironment('WS_PORT', defaultValue: '42618');
-    _contentGenerator = LisaWsContentGenerator('ws://$wsHost:$wsPort/app');
+    // WS 서버 주소: launch param(target) > dart-define > 기본값 순
+    const defaultWsHost = String.fromEnvironment('WS_HOST', defaultValue: 'localhost');
+    const defaultWsPort = String.fromEnvironment('WS_PORT', defaultValue: '42618');
+    final route = WidgetsBinding.instance.platformDispatcher.defaultRouteName;
+    final wsUrl = (route.startsWith('ws://') || route.startsWith('wss://'))
+        ? route
+        : 'ws://$defaultWsHost:$defaultWsPort/app';
+    print('[HOME] WS URL: $wsUrl (route=$route)');
+    _contentGenerator = LisaWsContentGenerator(wsUrl);
 
     final basicCatalog = CoreCatalogItems.asCatalog();
     final tvCatalog = Catalog(
       [...CoreCatalogItems.asCatalog().items, ...tvCatalogItems()],
       catalogId: 'https://a2ui.tv/catalogs/tv_home_v1.json',
     );
-    _processor = A2uiMessageProcessor(catalogs: [basicCatalog, tvCatalog]);
+    _processor = A2uiMessageProcessor(
+      catalogs: [basicCatalog, tvCatalog],
+      onClientAction: (event) => _handleCardEvent(event, 'ClientAction'),
+    );
 
     _conversation = GenUiConversation(
       contentGenerator: _contentGenerator,
@@ -437,16 +445,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
       case 'launchApp':
         final appId = event.context['appId'] as String?;
-        final params = Map<String, dynamic>.from(
-            event.context['params'] as Map? ?? {});
-        print('[ACTION] $typeName launchApp: $appId params=$params');
+        // a2ui_content_generator가 중첩 객체를 JSON 문자열로 변환하므로
+        // String이면 decode, Map이면 그대로, 없으면 빈 Map
+        final rawParams = event.context['params'];
+        final params = rawParams is Map
+            ? Map<String, dynamic>.from(rawParams)
+            : rawParams is String
+                ? (jsonDecode(rawParams) as Map<String, dynamic>?) ?? <String, dynamic>{}
+                : <String, dynamic>{};
+        final rawReplace = event.context['replaceParams'];
+        final replaceParams = rawReplace is Map
+            ? Map<String, dynamic>.from(rawReplace)
+            : rawReplace is String
+                ? (jsonDecode(rawReplace) as Map<String, dynamic>?)
+                : null;
+        print('[ACTION] $typeName launchApp: $appId params=$params replaceParams=$replaceParams');
         if (appId == null) break;
         if (appId.startsWith('http')) {
           openUrl(appId);
         } else if (!kIsWeb) {
+          final payload = <String, dynamic>{
+            'autoInstallation': true,
+            'checkUpdateOnLaunch': true,
+            'id': appId,
+            'params': params.isNotEmpty ? params : {'storeCaller': 'search'},
+            'reason': 'searchResult',
+            if (replaceParams != null) 'replaceParams': replaceParams,
+          };
           WebOSServiceBridge.callOneReply(WebOSServiceData(
-            'luna://com.palm.applicationManager/launch',
-            payload: {'id': appId, if (params.isNotEmpty) 'params': params},
+            'luna://com.webos.service.applicationmanager/launch',
+            payload: payload,
           ));
         }
         _collapseToEdge();

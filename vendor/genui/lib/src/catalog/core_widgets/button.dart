@@ -89,19 +89,32 @@ final button = CatalogItem(
             : colorScheme.onSurface,
       ).copyWith(textStyle: WidgetStatePropertyAll(textStyle)),
       onPressed: () {
-        final JsonMap resolvedContext = resolveContext(
-          itemContext.dataContext,
-          contextDefinition,
-        );
-        itemContext.dispatchEvent(
-          UserActionEvent(
-            name: actionName,
-            sourceComponentId: itemContext.id,
-            context: resolvedContext,
-          ),
-        );
+        print('[BUTTON] clicked: actionName=$actionName contextDef=$contextDefinition');
+        try {
+          final JsonMap resolvedContext = resolveContext(
+            itemContext.dataContext,
+            contextDefinition,
+          );
+          print('[BUTTON] resolvedContext=$resolvedContext');
+          itemContext.dispatchEvent(
+            UserActionEvent(
+              name: actionName,
+              sourceComponentId: itemContext.id,
+              context: resolvedContext,
+            ),
+          );
+          print('[BUTTON] event dispatched');
+        } catch (e, st) {
+          print('[BUTTON] ERROR: $e\n$st');
+        }
       },
-      child: child,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('▶이동 ', style: TextStyle(fontWeight: FontWeight.bold)),
+          if (child != null) child,
+        ],
+      ),
     );
   },
   exampleData: [
